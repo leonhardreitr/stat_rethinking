@@ -1,0 +1,405 @@
+---
+title: "Chapter2"
+format: html
+theme: cosmo
+editor_options: 
+  chunk_output_type: console
+---
+```{r}
+library(tidyverse)
+library(brms)
+```
+
+# Notizen
+
+```{r}
+(d <- tibble(toss = c("w", "l", "w", "w", "w", "l", "w", "l", "w")))
+```
+
+Bayesianisches Modellieren ist ein Loop aus drei Teilen:
+1. Data Story
+2. Update
+3 Evaluate
+
+Data Story:
+Theoretische/kausale Überlegungen, wie Daten entstehen könnten -> dann problistisches Modell basteln
+
+Updating: Posterior = A priori * Data
+
+Evaluate:
+Inference ist conditional von Modell
+
+
+```{r}
+dbinom(6, size = 9,prob = 0.5)
+```
+
+Grid approximation:
+
+Wir verwenden eine Anzahl von Parameter-Werten um die Posterior-Verteilung zu modellieren
+
+1. Gitter definieren aka wie viele Punkte
+2. Von jeden dieser Punkte den Prior berechnen
+3. Dann die Likelihood
+4. Dann Prior x Likelihood für die unstandardisierte Posterior
+5. Standardisiere $N/sum(N)$
+
+```{r}
+(
+  d_20 <- 
+    tibble(
+      p_grid = seq(from = 0, to = 1, length.out = 20),
+        prior=1
+        ) |> 
+    mutate(likelihood = dbinom(6,9,p_grid)) |> 
+    mutate(posterior_u = likelihood * prior) |> 
+    mutate(posterior = posterior_u/sum(posterior_u))
+)
+
+(
+  d_5 <- 
+    tibble(
+      p_grid = seq(from = 0, to = 1, length.out = 5),
+        prior=1
+        ) |> 
+    mutate(likelihood = dbinom(6,9,p_grid)) |> 
+    mutate(posterior_u = likelihood * prior) |> 
+    mutate(posterior = posterior_u/sum(posterior_u))
+)
+
+(
+  d_1000 <- 
+    tibble(
+      p_grid = seq(from = 0, to = 1, length.out = 1e4),
+        prior=1
+        ) |> 
+    mutate(likelihood = dbinom(6,9,p_grid)) |> 
+    mutate(posterior_u = likelihood * prior) |> 
+    mutate(posterior = posterior_u/sum(posterior_u))
+)
+
+library(patchwork)
+
+p1 <- 
+  d_20 |> 
+  ggplot(aes(p_grid, posterior))+
+  geom_point() +
+  geom_line() +
+  labs(
+    subtitle = "20 points",
+    x = "Prob W",
+    y = "Posterior"
+  ) +
+  theme(panel.grid = element_blank())
+
+p2 <- 
+  d_5 |> 
+  ggplot(aes(p_grid, posterior))+
+  geom_point() +
+  geom_line() +
+  labs(
+    subtitle = "5 points",
+    x = "Prob W",
+    y = "Posterior"
+  ) +
+  theme(panel.grid = element_blank())
+
+p3 <- 
+  d_1000 |> 
+  ggplot(aes(p_grid, posterior))+
+  geom_point() +
+  geom_line() +
+  labs(
+    subtitle = "1k points",
+    x = "Prob W",
+    y = "Posterior"
+  ) +
+  theme(panel.grid = element_blank())
+
+(p1 + p2) / p3
+```
+
+Quadratische Approximation:
+
+Grids super schlecht in skalierung. 
+Gsd sind die meisten Posterior Verteilung am höchsten Punkt gaussisch. Wir können uns daher der posterior verteilung annähren mit einer Gaußen Glockenkurve. 
+Quadratisch weil = log von Gaußischer Verteilung eine Parabola (quadratische Funktion) ist
+
+How to:
+
+1. Posteriore Mode finden via Algorithmjs der die Verteilung rauf klettert
+
+2. Sobald gefunden: Kurvigkeit(?) nahe des Peaks erfassen. Diese Region reicht, um die ganze Posterior verteilung quadratisch zu approximieren.
+
+```{r}
+library(rethinking)
+globe_qu <- quap(
+  alist(
+    W ~ dbinom(W + L, p),
+    p ~ dunif(0,1)
+  ), data = list(W = 6, L = 3)
+)
+
+precis(globe_qu)
+
+
+globe_qa_18 <-
+  quap(
+    alist(
+      w ~ dbinom(9 * 2, p),
+      p ~ dunif(0, 1)
+    ), data = list(w = 6 * 2))
+
+globe_qa_36 <-
+  quap(
+    alist(
+      w ~ dbinom(9 * 4, p),
+      p ~ dunif(0, 1)
+    ), data = list(w = 6 * 4))
+
+
+n_grid <- 100
+
+# wrangle
+tibble(w = c(6, 12, 24),
+       n = c(9, 18, 36),
+       s = c(.16, .11, .08)) %>% 
+  expand_grid(p_grid = seq(from = 0, to = 1, length.out = n_grid)) %>% 
+  mutate(prior = 1,
+         m     = .67)  %>%
+  mutate(likelihood = dbinom(w, size = n, prob = p_grid)) %>%
+  mutate(unstd_grid_posterior = likelihood * prior,
+         unstd_quad_posterior = dnorm(p_grid, m, s)) %>%
+  group_by(w) %>% 
+  mutate(grid_posterior = unstd_grid_posterior / sum(unstd_grid_posterior),
+         quad_posterior = unstd_quad_posterior / sum(unstd_quad_posterior),
+         n              = str_c("n = ", n)) %>% 
+  mutate(n = factor(n, levels = c("n = 9", "n = 18", "n = 36"))) %>% 
+  
+  # plot
+  ggplot(aes(x = p_grid)) +
+  geom_line(aes(y = grid_posterior)) +
+  geom_line(aes(y = quad_posterior),
+            color = "grey50") +
+  labs(x = "proportion water",
+       y = "density") +
+  theme(panel.grid = element_blank()) +
+  facet_wrap(~ n, scales = "free")
+```
+
+
+MCMC
+
+Alles was wir machen ist von der Posterior Verteilung Samplen.
+Wir haben einen haufen an Werten und die Frequenz dieser Werte entspricht der Posterior verteilung
+
+```{r}
+b2.1 <- 
+  brm(data = list(w=24),
+       family = binomial(link = "identity"),
+       w | trials(36) ~ 0 + Intercept,
+       prior(beta(1,1), 
+             class = b, lb = 0, ub = 1),
+       seed = 2)
+
+print(b2.1)
+
+posterior_summary(b2.1)
+
+as_draws_df(b2.1) |> 
+  mutate(n = "n = 36") |> 
+  
+  ggplot(aes(x = b_Intercept)) +
+  geom_density(fill = "black") +
+  scale_x_continuous("proportion water", limits = c(0,1)) +
+  theme(panel.grid = element_blank()) +
+  facet_wrap(~n)
+```
+
+# Übungen
+
+2E1
+2,4
+
+2E2
+3
+
+2E4
+Well I reckon there are atleast two ways of looking at this. Frequentism vs Bayes
+
+The Freq View: If I would toss the world infenitly, it would in 70% of those cases yield the result water
+
+The Bayes View: Given my prior knowledge, and the result i just got, I exclaim that water is 70% likely
+
+2M1
+
+```{r}
+library(tidyverse)
+
+dist <- tibble(p_grid = seq(from = 0, to = 1, length.out = 20),
+               prior = rep(1, times = 20)) %>%
+  mutate(likelihood_1 = dbinom(3, size = 3, prob = p_grid),
+         likelihood_2 = dbinom(3, size = 4, prob = p_grid),
+         likelihood_3 = dbinom(5, size = 7, prob = p_grid),
+         across(starts_with("likelihood"), ~ .x * prior),
+         across(starts_with("likelihood"), ~ .x / sum(.x))) %>%
+  pivot_longer(cols = starts_with("likelihood"), names_to = "pattern",
+               values_to = "posterior") %>%
+  separate(pattern, c(NA, "pattern"), sep = "_", convert = TRUE) %>%
+  mutate(obs = case_when(pattern == 1L ~ "W, W, W",
+                         pattern == 2L ~ "W, W, W, L",
+                         pattern == 3L ~ "L, W, W, L, W, W, W"))
+
+ggplot(dist, aes(x = p_grid, y = posterior)) +
+  facet_wrap(vars(fct_inorder(obs)), nrow = 1) +
+  geom_line() +
+  geom_point() +
+  labs(x = "Proportion Water (p)", y = "Posterior Density") + ggthemes::theme_few()
+```
+
+2M2
+```{r}
+dist <- tibble(p_grid = seq(from = 0, to = 1, length.out = 20)) %>%
+  mutate(prior = case_when(p_grid < 0.5 ~ 0L,
+                           TRUE ~ 1L),
+         likelihood_1 = dbinom(3, size = 3, prob = p_grid),
+         likelihood_2 = dbinom(3, size = 4, prob = p_grid),
+         likelihood_3 = dbinom(5, size = 7, prob = p_grid),
+         across(starts_with("likelihood"), ~ .x * prior),
+         across(starts_with("likelihood"), ~ .x / sum(.x))) %>%
+  pivot_longer(cols = starts_with("likelihood"), names_to = "pattern",
+               values_to = "posterior") %>%
+  separate(pattern, c(NA, "pattern"), sep = "_", convert = TRUE) %>%
+  mutate(obs = case_when(pattern == 1L ~ "W, W, W",
+                         pattern == 2L ~ "W, W, W, L",
+                         pattern == 3L ~ "L, W, W, L, W, W, W"))
+
+ggplot(dist, aes(x = p_grid, y = posterior)) +
+  facet_wrap(vars(fct_inorder(obs)), nrow = 1) +
+  geom_line() +
+  geom_point() +
+  labs(x = "Proportion Water (p)", y = "Posterior Density")
+```
+
+2M3
+```{r}
+p_earth_w <- .7
+p_earth <- .5
+p_mars <- 1
+
+p_land <- (p_earth * p_earth_w) + ((1 - p_earth) * p_mars)
+
+p <- (p_earth_l * p_earth) / p_land
+
+p
+```
+
+
+2M4
+```{r}
+card_bb <- 2
+card_wb <- 1
+card_ww <- 0
+
+l <- c(card_bb,card_wb,card_ww)
+prior <- c(1,1,1)
+u_posterior <- l * prior
+posterior <- u_posterior/sum(u_posterior)
+posterior
+```
+
+2M5
+```{r}
+card_bb <- 2
+card_wb <- 1
+card_ww <- 0
+
+
+l <- c(card_bb,card_wb,card_ww, card_bb)
+prior <- c(1,1,1,1)
+u_posterior <- l * prior
+posterior <- u_posterior/sum(u_posterior)
+posterior[1] + posterior[4]
+```
+
+2M6
+```{r}
+card_bb <- 2
+card_wb <- 1
+card_ww <- 0
+
+l <- c(card_bb,card_wb,card_ww)
+prior <- c(1,2,3)
+u_posterior <- l * prior
+posterior <- u_posterior/sum(u_posterior)
+posterior
+```
+
+2M7
+```{r}
+card_bb <- 2 * 3
+card_wb <- 1 * 2
+card_ww <- 0 * 1
+
+l <- c(card_bb,card_wb,card_ww)
+prior <- c(1,1,1)
+u_posterior <- l * prior
+posterior <- u_posterior/sum(u_posterior)
+posterior
+```
+
+2H1
+```{r}
+panda_a_t <- .1
+
+
+panda_b_t <- .2
+
+
+
+l <- c(panda_a_t, panda_b_t)
+prior <- c(1,1)
+u_posterior <- l * prior
+posterior <- u_posterior/sum(u_posterior)
+posterior
+
+posterior[1] * panda_a_t + posterior[2] * panda_b_t
+```
+
+2H2
+
+```{r}
+panda_a <- .5
+
+twins_p <- (panda_a * panda_a_t) + (0.5 * panda_b_t)
+
+our_panda <- (panda_a * panda_a_t)/twins_p
+our_panda
+```
+
+2H3
+```{r}
+panda_a_t <- 0.1*0.9
+panda_b_t <- 0.2 * 0.8
+
+l <- c(panda_a_t, panda_b_t)
+prior <- c(1,1)
+u_posterior <- l * prior
+posterior <- u_posterior/sum(u_posterior)
+posterior[1]
+```
+
+2H4
+```{r}
+panda_a <- (0.8 * 0.5) / ((0.5 * 0.8) + (0.5 * 0.35))
+
+panda_a_t <- 0.1*0.9
+panda_b_t <- 0.2 * 0.8
+
+l <- c(panda_a_t, panda_b_t)
+prior <- c(panda_a,(1 - panda_a))
+u_posterior <- l * prior
+posterior <- u_posterior/sum(u_posterior)
+posterior[1]
+```
+
