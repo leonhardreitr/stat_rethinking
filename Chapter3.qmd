@@ -1,0 +1,556 @@
+---
+title: "Chapter3"
+format: html
+editor_options: 
+  chunk_output_type: console
+---
+```{r}
+library(tidyverse)
+library(ggthemes)
+library(patchwork)
+library(brms)
+library(rethinking)
+```
+
+```{r}
+n <- 1000
+n_success <- 6
+n_trials  <- 9
+
+(
+  d <-
+  tibble(p_grid = seq(from = 0, to = 1, length.out = n),
+         # note we're still using a flat uniform prior
+         prior  = 1) %>% 
+  mutate(likelihood = dbinom(n_success, size = n_trials, prob = p_grid)) %>% 
+  mutate(posterior = (likelihood * prior) / sum(likelihood * prior))
+)
+```
+
+```{r}
+set.seed(3)
+
+n_samples <- 1e4
+
+samples <- 
+  d |> 
+  slice_sample(n = n_samples, weight_by = posterior, replace = T)
+  
+p1 <- samples |> 
+  mutate(sample_n = 1:n()) |> 
+  ggplot(aes(sample_n, p_grid)) +
+  geom_point(col = "steelblue", alpha = .1) +
+  scale_y_continuous("Proportion of water", limits = c(0,1)) +
+  xlab("sample number") +
+  theme(panel.grid = element_blank())
+
+p2 <- samples |> 
+  ggplot(aes(p_grid)) +
+  geom_density(fill = "black") +
+  scale_x_continuous("Proportion of water", limits = c(0,1)) +
+  theme(panel.grid = element_blank())
+
+
+p1 + p2
+```
+
+Wichtige Fragen:
+ - Wie viel Posterior Prob liegen unter/über einem bestimmten Parameter-Wert?
+ - Zwischen zwei Werten?
+ - WElcher Parameter markiert die niedrigsten 5% Posterior Wahrscheinlichkeit
+ - Welche Spanne von Werten beinhaltet 90% der Posterior Wahrscheinlichkeit?
+ - Welcher Parameter hat die höchste Posterior Wahrscheiblichkeit
+ 
+ Oder anders formuliert: 
+ Fragen über: Intervalle von definierten Grenzen (defined boundaries)
+ Intervalle von Wahrscheinlichkeitsmasse
+ Punkterwartungswerte(buh)
+ 
+```{r}
+d |> 
+  filter(p_grid < .5) |> 
+  summarize(sum = sum(posterior))
+
+samples  |> 
+  summarise(sum = mean(p_grid < .5))
+```
+ 
+```{r}
+quantile(samples$p_grid, .8)
+quantile(samples$p_grid, c(0.1,0.9))
+
+
+skewed_p <- 
+    tibble(p_grid = seq(from = 0, to = 1, length.out = 1e3),
+           prior = 1) |> 
+          mutate(prob_data = dbinom(3,3,p_grid)) |> 
+    mutate(post = prob_data * prior) |> 
+    mutate(posterior = post/sum(post))
+
+
+samples <- 
+  d |> 
+  slice_sample(n = n_samples, weight_by = posterior, replace = T)
+
+rethinking::PI(samples$p_grid, prob = .5)
+
+rethinking::HPDI(samples$p_grid,.5)
+```
+
+`tidybayes` time
+
+```{r}
+library(tidybayes)
+
+median_qi(samples$p_grid, .width = .5)
+median_qi(samples$p_grid, .width = c(.3,.5,.999))
+
+mode_hdi(samples$p_grid, .width = .5)
+
+qi(samples$p_grid, .width = .5)
+hdi(samples$p_grid, .width = .5)
+```
+
+```{r}
+d |> arrange(desc(posterior))
+```
+
+```{r}
+d |> 
+  arrange(desc(posterior)) |> 
+  slice(1)
+
+mode_hdi(samples$p_grid)
+mode_qi(samples$p_grid)
+
+
+n_success <- 3
+n_trials  <- 3
+
+d <-
+  d %>% 
+  mutate(likelihood = dbinom(n_success, size = n_trials, prob = p_grid)) %>% 
+  mutate(posterior  = (likelihood * prior) / sum(likelihood * prior))
+
+set.seed(3)
+(
+  samples <-
+    d %>% 
+    slice_sample(n = n_samples, weight_by = posterior, replace = T)
+)
+```
+
+Loess Funktion: Zeigt uns die Kosten, welche mit der Benutzung eines Punktschätzers einhergehen.
+UM EINEN PUNKTSCHÄTZER ZU WÄHLEN, BRAUCHEN WIR EINE LOESS FUNKTION
+
+$$
+d-p
+$$
+d = Decision, p = Correct answer
+
+Der Posterior Median maximiert den Gewinn und minimiert den Verlust
+
+```{r}
+d |> 
+  summarize(
+    "Loess" = sum(posterior * abs(0.5-p_grid))
+  )
+```
+
+
+```{r}
+loess_f <- function(data) {
+  d %>% 
+    mutate(loss = posterior * abs(data - p_grid)) %>% 
+    summarise(weighted_avg_loess = sum(loss))
+}
+
+(
+  l <-
+  d %>% 
+  select(p_grid) %>% 
+  rename(decision = p_grid) %>% 
+  mutate(weighted_average_loss = purrr::map(decision, loess_f)) %>% 
+  unnest(weighted_average_loss) 
+)
+```
+
+```{r}
+minimum_loss <-
+  l |> 
+  filter(weighted_avg_loess == min(weighted_avg_loess)) |> 
+  as.numeric()
+# the plot
+l %>%   
+  ggplot(aes(x = decision, y = weighted_avg_loess)) +
+  geom_area(fill = "pink") +
+  geom_vline(xintercept = minimum_loss[1], color = "black", linetype = 3) +
+  geom_hline(yintercept = minimum_loss[2], color = "black", linetype = 3) +
+  ylab("expected proportional loss") 
+```
+
+
+```{r}
+p_estimates <- 
+  bind_rows(
+    samples |> mean_qi(p_grid),
+    samples |> median_qi(p_grid),
+    samples |> mode_qi(p_grid)
+  ) |> 
+  select(p_grid,.point) |> 
+  mutate(x = p_grid + c(-.03,.03,-.03),
+         y = c(.0005,.0012,.002))
+
+
+d |> 
+  ggplot(aes(x = p_grid)) +
+  geom_area(aes(y = posterior),
+            fill = "darkred") +
+  geom_vline(xintercept = p_estimates$p_grid, col = "snow") +
+  geom_text(data = p_estimates,
+            aes(x = x, y = y, label = .point),
+            angle = 90, col = "snow") +
+  labs(x = "Proportion of water",
+       y = "Density") +
+  theme_tidybayes()
+```
+
+Quadratic loess $(d-p)^2$ für MW
+
+Aber generell: Punktschätzer not very Bayes like
+
+
+Samples für implied observations wichtig, 4 Gründe:
+ 1. Model design. Sample von Prior und siehe was dein Modell denkt bevor es Daten gesehen hat
+ 2. Model checking: Nachdem Model Daten gesehen hat, kann man implizierte Beobachtungen simulieren. Hilft zu checken ob Modell richtig funktioniert und um sein Verhalten zu verstehen.
+ 3. Software validation: Macht unsere Software was es soll?
+ 4. Research design: Wenn man von seinen Hypothesen Beobachtungen simulieren kann, kann evaluieren, welches Forschungsdesign passen könnte
+ 5. Forecasting: Schätzer können verwendet werden neue Beobachtungen zu simulieren, aber auch für neue Fälle/_beobachtungen
+ 
+ Bayesianische Modell sind immer generativ, weil Likelihood in zwei Richtungen funktioniert: Wie plausibel ist eine Beobachtung, und wenn es nur Parameter gibt welche Verteilung passt am ehesten
+ 
+```{r}
+tibble(n = 2,
+       p_w = .7,
+       w = 0:2) |> 
+  mutate(density = dbinom(w, size = n, prob = p_w))
+
+set.seed(1999)
+rbinom(1,2,.7)
+rbinom(10,2,.7)
+
+n <- 1e5
+
+d <- 
+  tibble(
+    draws = rbinom(n,2,.7)
+  )
+
+d |> 
+  count(draws) |> 
+  reframe(proportion = n / nrow(d), .by = draws)
+
+d <- 
+  tibble(
+    draws = rbinom(n,9,.7)
+  )
+
+d |> 
+  count(draws) |> 
+  reframe(proportion = n / nrow(d), .by = draws)
+
+d |> 
+  ggplot(aes(x = draws)) +
+  geom_histogram(binwidth = 1, center = 0,
+                 color = "snow", linewidth = 1/10) +
+  scale_x_continuous("Dummy Data Water", breaks = 0:4 * 2) +
+  ylab("Frequency") +
+  coord_cartesian(xlim = c(0,9))
+```
+ 
+Wichtig software via retrodictions zu testen. Wie gut reproduziert das Modell die verwendeten Daten?
+
+Ist das Modell adäquat?
+Wie versagt das Modell?
+
+posterior predictive distribution:
+Es gibt Unsicherheiten bzgl. Beobachtungen und p. 
+Wollen Unischerheit von p weiter verwenden.
+"All that is required is averaging over the posterior density for p, while computing the predictions"
+
+```{r}
+
+n <- 1000
+w <- 6
+t  <- 9
+
+(
+  d <-
+  tibble(p_grid = seq(from = 0, to = 1, length.out = n),
+         prior  = 1) %>% 
+  mutate(likelihood = dbinom(w, size = t, prob = p_grid)) %>% 
+  mutate(posterior = (likelihood * prior) / sum(likelihood * prior))
+)
+```
+
+
+# Playing around with brms
+```{r}
+b3.1 <-
+  brm(data = list(w = 6), 
+      family = binomial(link = "identity"),
+      w | trials(9) ~ 0 + Intercept,
+      prior(beta(1, 1), class = b, lb = 0, ub = 1),
+      iter = 5000, warmup = 1000,
+      seed = 3,
+      file = "fits/b03.01")
+
+posterior_summary(b3.1)
+
+f <- fitted(b3.1,
+            summary = F,
+            scale = "linear") |> 
+  tibble() |> 
+  set_names("P")
+
+summary(f)
+
+f |> 
+  ggplot(aes(x = P)) +
+  geom_density(fill = "steelblue2", col = "firebrick") +
+  annotate(geom = "text", x = .08, y = 2.5,
+           label = "Posterior probability") +
+  scale_x_continuous("probability of water",
+                     breaks = c(0, .5, 1),
+                     limits = 0:1) +
+  scale_y_continuous(NULL, breaks = NULL)
+
+
+# the simulation
+set.seed(3)
+
+f <-
+  f %>% 
+  mutate(w = rbinom(n(), size = t,  prob = P))
+
+# the plot
+f %>% 
+  ggplot(aes(x = w)) +
+  geom_histogram(binwidth = 1, center = 0,
+                 color = "grey92", linewidth = 1/10) +
+  scale_x_continuous("number of water samples", breaks = 0:3 * 3) +
+  scale_y_continuous(NULL, breaks = NULL, limits = c(0, 5000)) +
+  ggtitle("Posterior predictive distribution") +
+  coord_cartesian(xlim = c(0, 9)) +
+  theme(panel.grid = element_blank())
+```
+
+# Practice
+```{r}
+
+p_grid <- seq( from=0 , to=1 , length.out=1000 ) 
+prior <- rep( 1 , 1000 )
+likelihood <- dbinom( 6 , size=9 , prob=p_grid ) 
+posterior <- likelihood * prior
+posterior <- posterior / sum(posterior)
+set.seed(100)
+samples <- sample( p_grid , prob=posterior , size=1e4 , replace=TRUE )
+
+n <- 1000
+n_success <- 6
+n_trials  <- 9
+
+(
+  d <-
+  tibble(p_grid = seq(from = 0, to = 1, length.out = n),
+         # note we're still using a flat uniform prior
+         prior  = 1) %>% 
+  mutate(likelihood = dbinom(n_success, size = n_trials, prob = p_grid)) %>% 
+  mutate(posterior = (likelihood * prior) / sum(likelihood * prior))
+)
+```
+
+3E1
+```{r}
+d |> 
+  filter(p_grid < .2) |> 
+  summarize(sum = sum(posterior))
+```
+
+3E2
+```{r}
+d |> 
+  filter(p_grid > .8) |> 
+  summarize(sum = sum(posterior))
+```
+
+3E3
+```{r}
+d |> 
+  filter(p_grid < .8 & p_grid >.2) |> 
+  summarize(sum = sum(posterior))
+
+```
+
+3E4
+```{r}
+quantile(samples , 0.2 )
+```
+
+ 
+3E5
+```{r}
+quantile(samples, .8)
+```
+
+ 
+3E6
+```{r}
+hdi(samples, .66)
+```
+
+3E7
+```{r}
+rethinking::PI(samples, .66)
+```
+
+3M1
+```{r}
+n <- 1000
+n_success <- 8
+n_trials  <- 15
+
+(
+  d <-
+  tibble(p_grid = seq(from = 0, to = 1, length.out = n),
+         prior  = 1) %>% 
+  mutate(likelihood = dbinom(n_success, size = n_trials, prob = p_grid)) %>% 
+  mutate(posterior = (likelihood * prior) / sum(likelihood * prior))
+)
+```
+ 
+ 3M2
+```{r}
+n_samples <- 10000
+samples <- 
+  d |> 
+  slice_sample(n = n_samples, weight_by = posterior, replace = T)
+
+rethinking::HPDI(samples$p_grid,.9)
+```
+ 
+ 3M3
+```{r}
+w <- rbinom(1e4, size = 15, prob = samples$p_grid)
+mean(w == 8)
+```
+ 
+ 3M4
+```{r}
+w <- rbinom(1e4, size = 9, prob = samples$p_grid)
+mean(w == 6)
+```
+ 
+3M5
+```{r}
+n <- 1000
+n_success <- 8
+n_trials  <- 15
+
+(
+  d <-
+  tibble(p_grid = seq(from = 0, to = 1, length.out = n),
+         prior  = case_when(p_grid < 0.5 ~ 0L,
+                   TRUE ~ 1L)) %>% 
+  mutate(likelihood = dbinom(n_success, size = n_trials, prob = p_grid)) %>% 
+  mutate(posterior = (likelihood * prior) / sum(likelihood * prior))
+)
+
+
+n_samples <- 10000
+samples <- 
+  d |> 
+  slice_sample(n = n_samples, weight_by = posterior, replace = T)
+
+rethinking::HPDI(samples$p_grid,.9)
+
+w <- rbinom(1e4, size = 15, prob = samples$p_grid)
+mean(w == 8)
+
+w <- rbinom(1e4, size = 9, prob = samples$p_grid)
+mean(w == 6)
+```
+
+```{r}
+data(homeworkch3)
+birth1
+
+birth2
+
+```
+
+3H1
+```{r}
+p_grid <- seq(from = 0, to = 1, length.out = 1000)
+prior <- rep(1, 1000)
+
+boys <- sum(birth1) + sum(birth2)
+total <- length(birth1) + length(birth2)
+likelihood <- dbinom(boys, size = total, prob = p_grid)
+posterior <- likelihood * prior
+posterior <- posterior / sum(posterior)
+
+p_grid[which.max(posterior)]
+```
+
+3H2
+```{r}
+samples <- sample(p_grid, size = 1e4, prob = posterior, replace = T)
+
+HPDI(samples,prob = c(.5,.89,.97))
+```
+
+3H3
+```{r}
+set.seed(1999)
+b <- rbinom(1e4, size = 200, prob = samples)
+
+make_breaks <- function(x) {
+  length(seq(min(x), max(x), by = 1)) + 1
+}
+
+ggplot() +
+  stat_histinterval(aes(x = b), .width = c(0.66, 0.89), breaks = make_breaks, col = "chocolate") +
+  geom_vline(aes(xintercept = boys), linetype = "dashed", color = "tomato") +
+  labs(x = "Number of Boys", y = "Density") +
+  theme_ggdist()
+```
+
+3H4
+```{r}
+set.seed(1999)
+b <- rbinom(1e4, size = 100, prob = samples)
+
+ggplot() +
+  stat_histinterval(aes(x = b), .width = c(0.66, 0.89), breaks = make_breaks, col = "chocolate") +
+  geom_vline(aes(xintercept = sum(birth1)), linetype = "dashed", color = "tomato") +
+  labs(x = "Number of Boys", y = "Density") +
+  theme_ggdist()
+```
+
+3H5
+```{r}
+girls <- length(birth1) - sum(birth1)
+
+set.seed(1999)
+b <- rbinom(1e4, size = girls, prob = samples)
+
+d <- sum(birth2[which(birth1 == 0)])
+
+ggplot() +
+  stat_histinterval(aes(x = b), .width = c(0.66, 0.89), breaks = make_breaks) +
+  geom_vline(aes(xintercept = d), linetype = "dashed",
+             color = "red") +
+  labs(x = "Number of Boys", y = "Density")
+```
+
