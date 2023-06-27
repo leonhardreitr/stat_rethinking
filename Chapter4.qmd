@@ -1,0 +1,539 @@
+---
+title: "Chapter4"
+format: html
+editor_options: 
+  chunk_output_type: console
+theme: cosmo
+---
+```{r}
+library(tidyverse)
+library(ggthemes)
+library(patchwork)
+library(brms)
+library(rethinking)
+library(tidybayes)
+
+theme_set(theme_ggdist())
+```
+
+## Using Gaussian distribution
+
+**Ontologisch**:
+Welt ist voller (annäherungsweisen) Gaussischen Verteilungen. Viele Vorgänge summieren nämliche Fluktationen. Teil der Exponential-Familie
+
+**Epistomologisch**: Besonderer Zustand der Arroganz. Wenn alles was wir über eine Verteilung wissen (wollen/können) MW und $SD^2$ sind, dann erfüllt Gaussisch die meisten Annahmen.
+
+## A language for decsribing models
+
+  1. Variablen angeben, Daten (Beobachtbar), Parameter (Latent)
+  2. Definieren Variablen in Form andere Variablen oder Verteilungen
+  3. Kombo aus Variablen und Verteilungen ergibt ein joint generative Modell
+  
+$$
+y_i \sim Normal(\mu,\sigma) \\
+\mu_i = \beta x_i \\
+b \sim Normal(0,10) \\
+\sigma \sim Exponential(1) \\
+x_i \sim Normal(0,1)
+$$
+
+$$
+W \sim Binomial(N,p)  [Likelhood]\\
+p \sim Uniform(0,1) [Prior]
+$$
+
+~ = Stochastisch. Wenn Variablen/Parameter durch eine Verteilung definiert werden.
+
+```{r}
+n_points <- 100
+
+d <-
+  tibble(p_grid = seq(from = 0, to = 1, length.out = n_points),
+         w      = 6, 
+         n      = 9) |>
+  mutate(prior      = dunif(p_grid, min = 0, max = 1),
+         likelihood = dbinom(w, size = n, prob = p_grid)) %>%
+  mutate(posterior = likelihood * prior / sum(likelihood * prior))
+
+
+d |> 
+  pivot_longer(prior:posterior) |> 
+  mutate(name = factor(name, levels = c("prior", "likelihood", "posterior"))) |> 
+  ggplot(aes(p_grid, value, fill = name)) +
+  geom_area() +
+  scale_fill_manual(values = c("steelblue", "darkred", "blueviolet")) +
+  scale_y_continuous(NULL, breaks = NULL) +
+  theme(legend.position = "none") +
+  facet_wrap(~ name, scales = "free") + 
+  theme_calc()
+```
+
+
+## Gaussian Model of height
+```{r}
+data(Howell1)
+d <- Howell1
+```
+
+Estimates = Ganze Verteilung
+Posterior Verteilung daher eine Verteilung von Gaussischen Verteilungen.
+
+```{r}
+glimpse(d)
+
+d$height
+
+d2 <- d |> 
+  filter(age >= 18)
+
+nrow(d2)
+```
+
+```{r}
+dens(d2$height)
+```
+
+Anhand Plots von roher Daten zu entscheiden, wie man sie modellieren soll ist keine gute Entscheidung.
+Erstens: Kann aus mehreren (Gaussischen) Verteilungen bestehen.
+Zweitens: DIE EMPIRISCHE VERTEILUNG MUSS NICHT GAUSSISCH SEIN, DAMIT WIR EINE VERWENDEN.
+
+$$
+h_i \sim Normal(\mu, \sigma) \\
+\mu = \sim(178,20) \\
+\sigma \sim(0,50)
+$$
+```{r}
+p1 <- 
+  tibble(x = seq(from = 100, to = 250, by = .1)) |> 
+  ggplot(aes(x = x, y = dnorm(x, mean = 178, sd = 20))) +
+  geom_line() +
+  scale_x_continuous(breaks = seq(from = 100, to = 250, by = 25))
+
+p1
+
+p2 <-
+  tibble(x = seq(from = -10, to = 60, by = .1)) |> 
+  ggplot(aes(x = x, y = dunif(x, 0, 50))) +
+  geom_line() +
+  scale_x_continuous(breaks = seq(from = 10, to = 60, by = 10))
+p2
+
+n <- 1e4
+
+set.seed(1999)
+
+sim <- 
+  tibble(sample_mu = rnorm(n, 178, 20),
+         sample_sigma = runif(n,0,50)) |> 
+  mutate(height = rnorm(n, sample_mu, sample_sigma))
+
+p3 <- 
+  sim |> 
+  ggplot(aes(x = height)) +
+  geom_density(fill = "darkseagreen", col = "white") +
+  scale_x_continuous(breaks = c(0,73,178,284)) +
+  scale_y_continuous(NULL, breaks = NULL) +
+  ggtitle("height ~ dnorm(mu, sigma)") 
+  
+p3
+
+
+
+
+set.seed(1999)
+
+sim <- 
+  tibble(sample_mu = rnorm(n, 178, 100),
+         sample_sigma = runif(n,0,50)) |> 
+  mutate(height = rnorm(n, sample_mu, sample_sigma))
+
+# compute the values we'll use to break on our x axis
+breaks <-
+  c(mean(sim$height) - 3 * sd(sim$height), 0,
+    mean(sim$height), mean(sim$height) + 3 * sd(sim$height)) |> 
+    round(digits = 0)
+
+text <-
+  tibble(height = 272 - 25,
+         y      = .0013,
+         label  = "tallest man",
+         angle  = 90)
+
+# plot
+p4 <-
+  sim |>
+  ggplot(aes(x = height)) +
+  geom_density(fill = "black", linewidth = 0) +
+  geom_vline(xintercept = 0, color = "indianred") +
+  geom_vline(xintercept = 272, color = "indianred", linetype = 3) +
+  geom_text(data = text,
+            aes(y = y, label = label, angle = angle),
+            color = "indianred") +
+  scale_x_continuous(breaks = breaks) +
+  scale_y_continuous(NULL, breaks = NULL) +
+  ggtitle("height ~ dnorm(mu, sigma)\nmu ~ dnorm(178, 100)") +
+  theme(panel.grid = element_blank())
+
+(p1 + xlab("mu") | p2 + xlab("sigma")) / (p3 | p4)
+```
+
+
+```{r}
+sim |> 
+  count(height < 0) |> 
+  mutate(perc = 100 * n / sum(n))
+```
+
+```{r}
+n <- 200
+
+d_grid <-
+  crossing(mu    = seq(from = 140, to = 160, length.out = n),
+           sigma = seq(from = 4, to = 9, length.out = n))
+
+glimpse(d_grid)
+
+grid_function <- function(mu, sigma) {
+  
+  dnorm(d2$height, mean = mu, sd = sigma, log = T) |> 
+    sum()
+  
+}
+
+d_grid <-
+  d_grid |>
+  mutate(log_likelihood = map2(mu, sigma, grid_function)) %>%
+  unnest(log_likelihood) |>
+  mutate(prior_mu    = dnorm(mu, mean = 178, sd = 20, log = T),
+         prior_sigma = dunif(sigma, min = 0, max = 50, log = T)) |>
+  mutate(product = log_likelihood + prior_mu + prior_sigma) |>
+  mutate(probability = exp(product - max(product)))
+  
+d_grid |> 
+   ggplot(aes(x = mu, y = sigma, fill = probability)) + 
+  geom_raster(interpolate = T) +
+  scale_fill_viridis_c(option = "B") +
+  labs(x = expression(mu),
+       y = expression(sigma)) +
+  theme_base()
+```
+
+```{r}
+set.seed(1999)
+
+d_grid_samples <- 
+  d_grid |> 
+  sample_n(size = 1e4, replace = T, weight = probability)
+
+d_grid_samples |> 
+  ggplot(aes(mu, sigma)) + 
+  geom_point(size = .9, alpha = 1/15) +
+  scale_fill_colorblind() +
+  labs(x = expression(mu[samples]),
+       y = expression(sigma[samples])) 
+
+d_grid_samples %>% 
+  ggplot(aes(x = mu, y = sigma)) + 
+  geom_point(size = .9, alpha = 1/15) +
+  scale_fill_viridis_c() +
+  labs(x = expression(mu[samples]),
+       y = expression(sigma[samples]))
+
+
+d_grid_samples |> 
+  pivot_longer(mu:sigma) |> 
+  ggplot(aes(x = value)) + 
+  geom_density(fill = "thistle1", col = 'snow') +
+  scale_y_continuous(NULL, breaks = NULL) +
+  xlab(NULL) +
+  theme(panel.grid = element_blank()) +
+  facet_wrap(~ name, scales = "free", labeller = label_parsed)
+
+d_grid_samples |> 
+  pivot_longer(mu:sigma) |> 
+  group_by(name) |> 
+  tidybayes::mode_hdi(value)
+```
+
+```{r}
+
+data("Howell1")
+d <- Howell1
+d2 <- d[d$age >= 18,]
+b4.1 <- 
+  brm(data = d2, 
+      family = gaussian,
+      height ~ 1,
+      prior = c(prior(normal(178, 20), class = Intercept),
+                prior(uniform(0, 50), class = sigma, ub = 50)),
+      iter = 2000, warmup = 1000, chains = 4, cores = 4,
+      seed = 4,
+      file = "fits/b4.01")
+
+plot(b4.1)
+
+print(b4.1)
+
+b4.1$fit
+
+
+summary(b4.1, prob = .89)
+
+b4.2 <- 
+  brm(
+    data = d2,
+    height ~ 1,
+    prior = c(prior(normal(178,0.1), class = Intercept),
+              prior(uniform(0,50), class = sigma, ub = 50)),
+    iter = 2000, warmup = 1000, chains = 4, cores = 4, seed = 4, file = "fits/b4.2"
+  )
+
+summary(b4.2, prob = .89)
+rbind(summary(b4.1)$fixed,
+      summary(b4.2)$fixed)
+```
+
+```{r}
+post <- as_draws_df(b4.1)
+
+head(post,n = 10)
+
+post |> 
+  select(b_Intercept:sigma) |> 
+  cor()
+```
+
+# Linear prediction
+```{r}
+ggplot(d2, aes(weight, height)) +
+  geom_point(size = 2, shape = 1) +
+  theme_base()
+```
+
+Strategie: Parameter $\mu$ (MW der GV) in eine Linearkombination umwandeln, welche aus Prädiktoren und anderen Parametern besteht.
+
+$$
+h_i \sim Normal(\mu_i, \sigma) \\
+\mu_i = \alpha + \beta(x_i-\bar{x}) \\
+\alpha \sim Normal(178,20) \\
+\beta \sim Normal(0,10) \\
+\sigma \sim(0,50)
+$$
+
+Der MW $\mu$ ist nun kein Estimate, sondern besteht aus anderen Parametern und Variablen. Es ist daher NICHT Stochastisch, sondern deterministisch. 
+Die Parameter, in unseren Fall $\alpha$ und $\beta$ sind NICHT Teil der GV. SIe dienen lediglich dazu \mu zu manipulieren. Diese Parameter dienen dazu zu lernen. Worüber ? Über die Daten anhand der Posterior.
+Wir fragen mit $\mu_i = \alpha + \beta(x_i-\bar{x})$ zwei Fragen:
+ - Was erwarten wir wenn $x_i = \bar{x}$? Richtig $\alpha$. Weil wenn $x_i = \bar{x}$ gilt, dann gilt auch $mu_i = \alpha$.
+ - Welche Veränderung erwarten wir im Outcome, wenn $x_i$ um eine Einheit steigt?
+ $\beta$ beantwortet dies. Auch Slope genannt. Rate of change in expectation.
+ 
+ Priors:
+ Verteilungen der unbeobachteten Variablen aka Parameter. Warum haben wir $\beta = 0$? Wahrscheinlichkeit für >0 oder <0 gleich. 
+ 
+```{r}
+set.seed(1999)
+
+n_lines <- 100
+
+lines <- 
+  tibble(
+    n = 1:n_lines,
+    a = rnorm(n_lines, mean = 178, sd =20),
+    b = rnorm(n_lines, mean = 0, sd = 10)) |> 
+  expand_grid(weight = range(d2$weight)) |> 
+  mutate(height = a + b * (weight - mean(d2$weight)))
+
+lines |> 
+  ggplot(aes(weight, height, group = n)) +
+  geom_hline(yintercept = c(0, 272), linetype = 2:1, linewidth = 1/3) +
+  geom_line(alpha = 1/10, col = "red3") +
+  coord_cartesian(ylim = c(-100, 400)) +
+  ggtitle("b ~ dnorm(0,10")
+
+
+  tibble(
+    n = 1:n_lines,
+    a = rnorm(n_lines, mean = 178, sd =20),
+    b = rlnorm(n_lines, mean = 0, sd = 1)) |> 
+  expand_grid(weight = range(d2$weight)) |> 
+  mutate(height = a + b * (weight - mean(d2$weight))) |> 
+
+  ggplot(aes(weight, height, group = n)) +
+  geom_hline(yintercept = c(0, 272), linetype = 2:1, linewidth = 1/3) +
+  geom_line(alpha = 1/10, col = "red3") +
+  coord_cartesian(ylim = c(-100, 400)) +
+  ggtitle("b ~ dnorm(0,10")
+```
+ 
+Model
+```{r}
+d2 <- 
+  d2 |> 
+  mutate(weight_c = weight - mean(weight))
+
+
+b4.3 <- 
+  brm(data = d2,
+      family = gaussian,
+      height ~ 1 + weight_c,
+      prior = c(prior(normal(178,20), class = Intercept),
+                prior(lognormal(0,1), class = b),
+                prior(uniform(0,50), class = sigma, ub = 50)),
+      iter = 2000, warmup = 1000, chains = 4, cores = 4,
+      seed = 4,
+      file = "fits/b4.31")
+
+summary(b4.3)
+
+plot(b4.3)
+
+b4.3b <- 
+  brm(data = d2, 
+      family = gaussian,
+      bf(height ~ a + exp(lb) * weight_c,
+         a ~ 1,
+         lb ~ 1,
+         nl = TRUE),
+      prior = c(prior(normal(178, 20), class = b, nlpar = a),
+                prior(normal(0, 1), class = b, nlpar = lb),
+                prior(uniform(0, 50), class = sigma, ub = 50)),
+      iter = 2000, warmup = 1000, chains = 4, cores = 4,
+      seed = 4,
+      file = "fits/b04.03b")
+
+posterior_summary(b4.3)[1:3,] |> 
+  round(2)
+
+as_draws_df(b4.3) |> 
+  select(b_Intercept:sigma) |> 
+  cov() |> 
+  round(3)
+
+pairs(b4.3)
+
+labels <- 
+  c(-10,0,10) + mean(d2$weight) |> round(0)
+
+d2 |> 
+  ggplot(aes(weight_c, height)) +
+  geom_abline(intercept = fixef(b4.3)[1],
+              slope = fixef(b4.3)[2], col = "black") +
+  geom_point(shape = 1, size = 2, col = "royalblue") +
+  scale_x_continuous("Weight", breaks = c(-10,0, 10), labels = labels)
+  labs(x = "Weight", y = "Height")
+```
+
+```{r}
+post <- as_draws_df(b4.3)
+
+mu_at_50 <- 
+  post |> 
+  transmute(mu_at_50 = b_Intercept + b_xbar * 5.01)
+ 
+head(mu_at_50)
+
+mu_at_50 |> 
+  ggplot(aes(x = mu_at_50)) +
+  geom_density(fill = "tan", col = "plum") +
+  scale_y_continuous(NULL, breaks = NULL) +
+  xlab(expression(mu["height | weight = 50"])) +
+  theme_classic()
+
+
+mean_hdi(mu_at_50[,1],.width = c(.89,.97))
+
+mu_at_50 |> 
+  ggplot(aes(x = mu_at_50)) +
+  stat_halfeye(point_interval = mode_hdi, width = .89,
+               fill = "plum2") +
+  scale_y_continuous(NULL, breaks = NULL) +
+  xlab(expression(mu["height | weight = 50"])) +
+  theme_classic()
+```
+
+```{r}
+weight_seq <- 
+  tibble(weight = 25:70) |> 
+  mutate(weight_c = weight - mean(d2$weight))
+
+mu <-
+  fitted(b4.3,
+         summary = F,
+         newdata = weight_seq) |> 
+  data.frame() |> 
+  set_names(25:70) |> 
+  mutate(iter = 1:n())
+
+mu <- mu |> 
+  pivot_longer(-iter,
+               names_to = "weight",
+               values_to = "height") |> 
+  mutate(weigth = as.numeric(weight))
+```
+
+```{r}
+mu |> 
+  ggplot(aes(x = weight, y = height)) +
+  geom_point(data = mu |> filter(iter < 101), 
+             color = "royalblue", alpha = .05) +
+  coord_cartesian(xlim = c(30, 65)) + theme_black() + theme(panel.grid = element_blank())
+```
+
+# Curves from lines oida
+
+Polynomial Regression & B-Splines: Ein Prädiktor wird in mehrere transformiert unter der Verwendung eines Parameters für das Gewicht. B-Splines besser
+
+*Polynomial*: Verwendet die Power (zb. quadratisch oder kubisch) einer Variable als weiteren Prädiktor
+
+```{r}
+data("Howell1")
+d <- Howell1
+
+glimpse(d)
+
+d |> 
+  ggplot(aes(weight, height)) +
+  geom_point(shape = 1, col = "royalblue") +
+  annotate(geom = "text", x = 42, y = 100, 
+           label = "This is a curve")
+```
+
+Häufigste Polynomiale Regression ist eine Parabola des MW:
+$$
+\mu_i = \alpha + \beta_1x_i + \beta_2x_i^2
+$$
+
+Model einfach zu bauen, aber schwer zu kapieren
+
+$$
+h_i \sim Normal(\mu_i, \sigma) \\
+\mu_i = \alpha + \beta_1x_i + \beta_2x_i^2 \\
+\alpha \sim Normal(178,20) \\
+\beta_1 \sim Log-Normal(0,1) \\
+\beta_2 \sim Normal(0,1) \\
+\sigma \sim Uniform(0,50)
+$$
+Sehr schwierig für polynomiale Modelle gute Priors zu finden
+
+```{r}
+d <- 
+  d |> 
+  mutate(weight_s = (weight - mean(weight)) / sd(weight)) |> 
+  mutate(weight_s2 = weight_s^2)
+
+b4.5 <- brm(
+  data = d, 
+      family = gaussian,
+      height ~ 1 + weight_s + weight_s2,
+      prior = c(prior(normal(178, 20), class = Intercept),
+                prior(lognormal(0, 1), class = b, coef = "weight_s"),
+                prior(normal(0, 1), class = b, coef = "weight_s2"),
+                prior(uniform(0, 50), class = sigma, ub = 50)),
+      iter = 2000, warmup = 1000, chains = 4, cores = 4,
+seed = 4, file = "fits/b4.5")
+
+plot(b4.5, widths = c(1,2))
+
+print(b4.5)
+```
+
