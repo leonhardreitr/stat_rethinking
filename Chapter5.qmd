@@ -1,0 +1,248 @@
+---
+title: "Chapter 5"
+format: html
+editor_options: 
+  chunk_output_type: console
+theme: cosmo
+editor: 
+  markdown: 
+    wrap: 72
+---
+
+```{r}
+library(tidyverse)
+library(ggthemes)
+library(patchwork)
+library(brms)
+library(rethinking)
+library(tidybayes)
+
+theme_set(theme_ggdist())
+```
+
+```{r}
+data("WaffleDivorce")
+
+
+d <- WaffleDivorce
+
+d <- 
+  d |> 
+  mutate(d = standardize(Divorce),
+         m = standardize(Marriage),
+         a = standardize(MedianAgeMarriage))
+  
+glimpse(d)
+```
+
+Plotten yeah boyyyy
+
+```{r}
+library(ggrepel)
+
+d |> 
+  ggplot(aes(WaffleHouses/Population, Divorce)) +
+  stat_smooth(method = "lm", fullrange = T, linewidth = .5,
+              col = "yellow4", fill = "yellow4", alpha = .15) +
+  geom_point(size = 1.5, col = "red", alpha = .5) + 
+  geom_text_repel(data = d |> filter(Loc %in%
+  c("ME", "OK", "AR", "AL", "GA", "SC", "NJ")),  
+  aes(label = Loc), 
+  size = 3, seed = 1999) +
+  scale_x_continuous("Waffel Houses per million People", limits = c(0,55)) +
+  ylab("Divorce Rate") +
+  coord_cartesian(xlim = c(0,50), ylim = c(5,15)) +
+  theme_bw() + theme(panel.grid = element_blank())
+  
+```
+
+```{r}
+library(tigris)
+
+d_states <- states(cb = T, resolution = "20m") |> 
+  shift_geometry() |> 
+  right_join(d |> 
+               mutate(NAME = Location |> as.character()) |> 
+               select(d:a, NAME)) |> 
+  pivot_longer(cols = c("d", "m", "a"), names_to = "variable")
+
+d_states |> 
+  ggplot() +
+  geom_sf(aes(fill = value, geometry = geometry),
+          size = 0) +
+  scale_fill_gradient(low = "snow", high = "deeppink4") +
+  theme_void() +
+  theme(legend.position = "none", strip.text = element_text(margin = 
+                                                              margin(0,0,.5,0))) +
+  facet_wrap(~ variable, labeller = label_both)
+
+d_states %>%
+  ggplot() +
+  geom_sf(aes(fill = value, geometry = geometry),
+          size = 0) +
+  scale_fill_gradient(low = "#f8eaea", high = "firebrick4") +
+  theme_void() +
+  theme(legend.position = "none",
+        strip.text = element_text(margin = margin(0, 0, .5, 0))) +
+  facet_wrap(~ variable, labeller = label_both) 
+```
+
+In großen Datensätzen korreliert quasi alles miteinader.
+Aber da Korrelation $\ne$ Kausalität.
+Multiple Regression hilft uns dabei pure assozative Zusammenhänge von kausalen zu unterscheiden.
+
+Insbesondere verwendet man MLR für:
+  - "Kontrolle" von Confounder
+  - Multiple und komplexe Kausalität
+  - Interaktionen. Wichtigkeit einer Variable hängt von anderer ab.
+  
+```{r}
+library(patchwork)
+p1 <- d |> 
+  ggplot(aes(Marriage, Divorce)) +
+  geom_smooth(method = "lm",col = "black", fill = "grey") +
+  geom_point(shape = 1, col = "steelblue", size = 2.5) +
+  labs(x = "Marriage rate", y = "Divorce rate") 
+
+p2 <- d |> 
+  ggplot(aes(MedianAgeMarriage, Divorce)) +
+  geom_smooth(method = "lm",col = "black", fill = "grey") +
+  geom_point(shape = 1, col = "steelblue", size = 2.5) +
+  labs(x = "Median age marriage", y = "Divorce rate") 
+
+p1 + p2
+```
+
+$$
+D_i \sim Normal(\mu, \sigma) \\
+\mu_i = \alpha + \beta_aA_i \\
+\alpha \sim Normal(0, 0.02) \\
+\beta \sim Normal(0, 0.5) \\
+\sigma \sim Exponential(1)
+$$
+```{r}
+sd(d$MedianAgeMarriage)
+```
+
+```{r}
+b5.1 <- 
+  brm(data = d, 
+      family = gaussian,
+      d ~ 1 + a,
+      prior = c(prior(normal(0, 0.2), class = Intercept),
+                prior(normal(0, 0.5), class = b),
+                prior(exponential(1), class = sigma)),
+      iter = 2000, warmup = 1000, chains = 4, cores = 4,
+      seed = 5,
+      sample_prior = T,
+      file = "fits/b05.01")
+
+b5.1 <- 
+  brm(data = d,
+      family = gaussian,
+      d ~ 1 + a,
+      prior = c(prior(normal(0,0.2), class = Intercept),
+                prior(normal(0,0.5), class = b),
+                prior(exponential(1), class = sigma)),
+      iter = 2000, cores = 4, chains = 4, warmup = 1000,
+      seed = 9, sample_prior = T, file = "fits/b5.1")
+
+prior <- prior_draws(b5.1)
+
+glimpse(prior)
+```
+
+```{r}
+set.seed(23)
+prior |> 
+  slice_sample(n = 50) |> 
+  rownames_to_column("draw") |> 
+  expand_grid(a = c(-2,2)) |> 
+  mutate(d = Intercept + b * a) |> 
+  ggplot(aes(x = a, y = d)) +
+  geom_line(aes(group = draw),
+            col = "blue", alpha = .4) +
+  labs(x = "Median age marriage (std)", y = "Divorce rate (std)")
+```
+
+```{r}
+print(b5.1)
+
+b5.2 <- 
+  brm(
+    data = d,
+    family = gaussian,
+    formula = d ~ 1 + m,
+    prior = c(prior(normal(0, 0.2), class = Intercept),
+                prior(normal(0, 0.5), class = b),
+                prior(exponential(1), class = sigma)),
+      iter = 2000, warmup = 1000, chains = 4, cores = 4,
+      seed = 5,
+      file = "fits/b5.2")
+```
+
+Okay bivariate Korrelationen miteinader zu vergleichen bringt recht wenig.
+Wir brauchen etwas um kausale Implikationen aufzuzeichnen --> DAG!
+
+```{r}
+library(ggdag)
+dag_coords <-
+  tibble(name = c("A", "M", "D"),
+         x    = c(1, 3, 2),
+         y    = c(2, 2, 1))
+
+p1 <- dagify(M ~ A,
+         D ~ A + M,
+         coords = dag_coords) |> ggdag() + theme_dag()
+
+p2 <- dagify(M ~ A,
+         D ~ A,
+         coords = dag_coords) |> ggdag() + theme_dag()
+p1 | p2
+
+d |> 
+  select(d:a) |> 
+  psych::lowerCor()
+
+library(dagitty)
+
+dagitty('dag{ D <- A -> M }') |> 
+  impliedConditionalIndependencies()
+```
+
+MLR beantwortet die Frage:" Gibt es zusätzlichen Nutzen eine Variable zu kennen, wenn
+ich bereits alle anderen Prädiktoren kenne?"
+
+MLR Notation:
+  - Prädiktoren nominieren
+  - Für jeden Prädiktor einen Parameter erstellen, welcher die konditionale Assozation mit dem Outcome hat.
+- Diesen Parameter mit Prädiktor multiplizieren und in das lineare Modell aufnehmen
+
+```{r}
+b5.3 <- 
+  brm(data = d, 
+      family = gaussian,
+      d ~ 1 + m + a,
+      prior = c(prior(normal(0, 0.2), class = Intercept),
+                prior(normal(0, 0.5), class = b),
+                prior(exponential(1), class = sigma)),
+      iter = 2000, warmup = 1000, chains = 4, cores = 4,
+      seed = 5,
+      file = "fits/b05.03")
+
+b5.3 <- 
+  brm(
+    data = d,
+    family = gaussian,
+    d ~ 1 + m + a,
+    prior = c(prior(normal(0, 0.2), class = Intercept),
+                prior(normal(0, 0.5), class = b),
+                prior(exponential(1), class = sigma)),
+      iter = 2000, warmup = 1000, chains = 4, cores = 4,
+      seed = 5,
+      file = "fits/b5.3")
+
+print(b5.3)
+
+```
+
