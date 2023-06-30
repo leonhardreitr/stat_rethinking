@@ -4,7 +4,11 @@ format: html
 editor_options: 
   chunk_output_type: console
 theme: cosmo
+editor: 
+  markdown: 
+    wrap: 72
 ---
+
 ```{r}
 library(tidyverse)
 library(ggthemes)
@@ -18,17 +22,21 @@ theme_set(theme_ggdist())
 
 ## Using Gaussian distribution
 
-**Ontologisch**:
-Welt ist voller (annäherungsweisen) Gaussischen Verteilungen. Viele Vorgänge summieren nämliche Fluktationen. Teil der Exponential-Familie
+**Ontologisch**: Welt ist voller (annäherungsweisen) Gaussischen
+Verteilungen. Viele Vorgänge summieren nämliche Fluktationen. Teil der
+Exponential-Familie
 
-**Epistomologisch**: Besonderer Zustand der Arroganz. Wenn alles was wir über eine Verteilung wissen (wollen/können) MW und $SD^2$ sind, dann erfüllt Gaussisch die meisten Annahmen.
+**Epistomologisch**: Besonderer Zustand der Arroganz. Wenn alles was wir
+über eine Verteilung wissen (wollen/können) MW und $SD^2$ sind, dann
+erfüllt Gaussisch die meisten Annahmen.
 
 ## A language for decsribing models
 
-  1. Variablen angeben, Daten (Beobachtbar), Parameter (Latent)
-  2. Definieren Variablen in Form andere Variablen oder Verteilungen
-  3. Kombo aus Variablen und Verteilungen ergibt ein joint generative Modell
-  
+1.  Variablen angeben, Daten (Beobachtbar), Parameter (Latent)
+2.  Definieren Variablen in Form andere Variablen oder Verteilungen
+3.  Kombo aus Variablen und Verteilungen ergibt ein joint generative
+    Modell
+
 $$
 y_i \sim Normal(\mu,\sigma) \\
 \mu_i = \beta x_i \\
@@ -42,7 +50,8 @@ W \sim Binomial(N,p)  [Likelhood]\\
 p \sim Uniform(0,1) [Prior]
 $$
 
-~ = Stochastisch. Wenn Variablen/Parameter durch eine Verteilung definiert werden.
+\~ = Stochastisch. Wenn Variablen/Parameter durch eine Verteilung
+definiert werden.
 
 ```{r}
 n_points <- 100
@@ -52,7 +61,7 @@ d <-
          w      = 6, 
          n      = 9) |>
   mutate(prior      = dunif(p_grid, min = 0, max = 1),
-         likelihood = dbinom(w, size = n, prob = p_grid)) %>%
+         likelihood = dbinom(w, size = n, prob = p_grid)) |>
   mutate(posterior = likelihood * prior / sum(likelihood * prior))
 
 
@@ -68,15 +77,15 @@ d |>
   theme_calc()
 ```
 
-
 ## Gaussian Model of height
+
 ```{r}
 data(Howell1)
 d <- Howell1
 ```
 
-Estimates = Ganze Verteilung
-Posterior Verteilung daher eine Verteilung von Gaussischen Verteilungen.
+Estimates = Ganze Verteilung Posterior Verteilung daher eine Verteilung
+von Gaussischen Verteilungen.
 
 ```{r}
 glimpse(d)
@@ -93,15 +102,17 @@ nrow(d2)
 dens(d2$height)
 ```
 
-Anhand Plots von roher Daten zu entscheiden, wie man sie modellieren soll ist keine gute Entscheidung.
-Erstens: Kann aus mehreren (Gaussischen) Verteilungen bestehen.
-Zweitens: DIE EMPIRISCHE VERTEILUNG MUSS NICHT GAUSSISCH SEIN, DAMIT WIR EINE VERWENDEN.
+Anhand Plots von roher Daten zu entscheiden, wie man sie modellieren
+soll ist keine gute Entscheidung. Erstens: Kann aus mehreren
+(Gaussischen) Verteilungen bestehen. Zweitens: DIE EMPIRISCHE VERTEILUNG
+MUSS NICHT GAUSSISCH SEIN, DAMIT WIR EINE VERWENDEN.
 
 $$
 h_i \sim Normal(\mu, \sigma) \\
 \mu = \sim(178,20) \\
 \sigma \sim(0,50)
 $$
+
 ```{r}
 p1 <- 
   tibble(x = seq(from = 100, to = 250, by = .1)) |> 
@@ -177,7 +188,6 @@ p4 <-
 (p1 + xlab("mu") | p2 + xlab("sigma")) / (p3 | p4)
 ```
 
-
 ```{r}
 sim |> 
   count(height < 0) |> 
@@ -202,7 +212,7 @@ grid_function <- function(mu, sigma) {
 
 d_grid <-
   d_grid |>
-  mutate(log_likelihood = map2(mu, sigma, grid_function)) %>%
+  mutate(log_likelihood = map2(mu, sigma, grid_function)) |>
   unnest(log_likelihood) |>
   mutate(prior_mu    = dnorm(mu, mean = 178, sd = 20, log = T),
          prior_sigma = dunif(sigma, min = 0, max = 50, log = T)) |>
@@ -232,7 +242,7 @@ d_grid_samples |>
   labs(x = expression(mu[samples]),
        y = expression(sigma[samples])) 
 
-d_grid_samples %>% 
+d_grid_samples |> 
   ggplot(aes(x = mu, y = sigma)) + 
   geom_point(size = .9, alpha = 1/15) +
   scale_fill_viridis_c() +
@@ -304,13 +314,15 @@ post |>
 ```
 
 # Linear prediction
+
 ```{r}
 ggplot(d2, aes(weight, height)) +
   geom_point(size = 2, shape = 1) +
   theme_base()
 ```
 
-Strategie: Parameter $\mu$ (MW der GV) in eine Linearkombination umwandeln, welche aus Prädiktoren und anderen Parametern besteht.
+Strategie: Parameter $\mu$ (MW der GV) in eine Linearkombination
+umwandeln, welche aus Prädiktoren und anderen Parametern besteht.
 
 $$
 h_i \sim Normal(\mu_i, \sigma) \\
@@ -320,16 +332,21 @@ h_i \sim Normal(\mu_i, \sigma) \\
 \sigma \sim(0,50)
 $$
 
-Der MW $\mu$ ist nun kein Estimate, sondern besteht aus anderen Parametern und Variablen. Es ist daher NICHT Stochastisch, sondern deterministisch. 
-Die Parameter, in unseren Fall $\alpha$ und $\beta$ sind NICHT Teil der GV. SIe dienen lediglich dazu \mu zu manipulieren. Diese Parameter dienen dazu zu lernen. Worüber ? Über die Daten anhand der Posterior.
-Wir fragen mit $\mu_i = \alpha + \beta(x_i-\bar{x})$ zwei Fragen:
- - Was erwarten wir wenn $x_i = \bar{x}$? Richtig $\alpha$. Weil wenn $x_i = \bar{x}$ gilt, dann gilt auch $mu_i = \alpha$.
- - Welche Veränderung erwarten wir im Outcome, wenn $x_i$ um eine Einheit steigt?
- $\beta$ beantwortet dies. Auch Slope genannt. Rate of change in expectation.
- 
- Priors:
- Verteilungen der unbeobachteten Variablen aka Parameter. Warum haben wir $\beta = 0$? Wahrscheinlichkeit für >0 oder <0 gleich. 
- 
+Der MW $\mu$ ist nun kein Estimate, sondern besteht aus anderen
+Parametern und Variablen. Es ist daher NICHT Stochastisch, sondern
+deterministisch. Die Parameter, in unseren Fall $\alpha$ und $\beta$
+sind NICHT Teil der GV. SIe dienen lediglich dazu \mu zu manipulieren.
+Diese Parameter dienen dazu zu lernen. Worüber ? Über die Daten anhand
+der Posterior. Wir fragen mit $\mu_i = \alpha + \beta(x_i-\bar{x})$ zwei
+Fragen: - Was erwarten wir wenn $x_i = \bar{x}$? Richtig $\alpha$. Weil
+wenn $x_i = \bar{x}$ gilt, dann gilt auch $mu_i = \alpha$. - Welche
+Veränderung erwarten wir im Outcome, wenn $x_i$ um eine Einheit steigt?
+$\beta$ beantwortet dies. Auch Slope genannt. Rate of change in
+expectation.
+
+Priors: Verteilungen der unbeobachteten Variablen aka Parameter. Warum
+haben wir $\beta = 0$? Wahrscheinlichkeit für \>0 oder \<0 gleich.
+
 ```{r}
 set.seed(1999)
 
@@ -364,8 +381,9 @@ lines |>
   coord_cartesian(ylim = c(-100, 400)) +
   ggtitle("b ~ dnorm(0,10")
 ```
- 
+
 Model
+
 ```{r}
 d2 <- 
   d2 |> 
@@ -428,7 +446,7 @@ post <- as_draws_df(b4.3)
 
 mu_at_50 <- 
   post |> 
-  transmute(mu_at_50 = b_Intercept + b_xbar * 5.01)
+  transmute(mu_at_50 = b_Intercept + b_weight_c * 5.01)
  
 head(mu_at_50)
 
@@ -476,14 +494,17 @@ mu |>
   ggplot(aes(x = weight, y = height)) +
   geom_point(data = mu |> filter(iter < 101), 
              color = "royalblue", alpha = .05) +
-  coord_cartesian(xlim = c(30, 65)) + theme_black() + theme(panel.grid = element_blank())
+  theme_black() + theme(panel.grid = element_blank())
 ```
 
 # Curves from lines oida
 
-Polynomial Regression & B-Splines: Ein Prädiktor wird in mehrere transformiert unter der Verwendung eines Parameters für das Gewicht. B-Splines besser
+Polynomial Regression & B-Splines: Ein Prädiktor wird in mehrere
+transformiert unter der Verwendung eines Parameters für das Gewicht.
+B-Splines besser
 
-*Polynomial*: Verwendet die Power (zb. quadratisch oder kubisch) einer Variable als weiteren Prädiktor
+*Polynomial*: Verwendet die Power (zb. quadratisch oder kubisch) einer
+Variable als weiteren Prädiktor
 
 ```{r}
 data("Howell1")
@@ -498,8 +519,7 @@ d |>
            label = "This is a curve")
 ```
 
-Häufigste Polynomiale Regression ist eine Parabola des MW:
-$$
+Häufigste Polynomiale Regression ist eine Parabola des MW: $$
 \mu_i = \alpha + \beta_1x_i + \beta_2x_i^2
 $$
 
@@ -512,8 +532,7 @@ h_i \sim Normal(\mu_i, \sigma) \\
 \beta_1 \sim Log-Normal(0,1) \\
 \beta_2 \sim Normal(0,1) \\
 \sigma \sim Uniform(0,50)
-$$
-Sehr schwierig für polynomiale Modelle gute Priors zu finden
+$$ Sehr schwierig für polynomiale Modelle gute Priors zu finden
 
 ```{r}
 d <- 
@@ -535,5 +554,425 @@ seed = 4, file = "fits/b4.5")
 plot(b4.5, widths = c(1,2))
 
 print(b4.5)
+
+
+d <-
+  d |> 
+  mutate(weight_s3 = weight_s^3)
+
+b4.6 <- brm(
+  data = d, 
+      family = gaussian,
+      height ~ 1 + weight_s + weight_s2 + weight_s3,
+      prior = c(prior(normal(178, 20), class = Intercept),
+                prior(lognormal(0, 1), class = b, coef = "weight_s"),
+                prior(normal(0, 1), class = b, coef = "weight_s2"),
+                prior(normal(0, 1), class = b, coef = "weight_s3"),
+                prior(uniform(0, 50), class = sigma, ub = 50)),
+      iter = 2000, warmup = 1000, chains = 4, cores = 4,
+seed = 4, file = "fits/b4.6")
+
+plot(b4.6, widths = c(1,2))
+
+print(b4.6)
 ```
 
+splines
+
+```{r}
+data("cherry_blossoms")
+
+d <- cherry_blossoms
+
+d |> 
+  gather() |> 
+  summarise(mean = mean(value, na.rm = T),
+            sd   = sd(value, na.rm = T),
+            ll   = quantile(value, prob = .055, na.rm = T),
+            ul   = quantile(value, prob = .945, na.rm = T), .by = key) |> 
+  mutate_if(is.double, round, digits = 2)
+
+d |> 
+  ggplot(aes(x = year, y = doy)) +
+  geom_point(col = "#ffb7c5", alpha = 1/2) +
+  theme_bw() +
+  theme(panel.grid = element_blank(),
+        panel.background = element_rect(fill = "#4f455c")) +
+  labs(x = "Year", y = "Doy")
+```
+
+B-Splines zerlegen einen prädiktor in kleinere Teile. Jedes Teil bekommt
+dann einen Parameter. Diese verwenden wir dann in einem Linearen Modell
+
+```{r}
+d2 <- 
+  d |> 
+  drop_na()
+
+num_knots <- 15
+knot_list <- quantile(d2$year,
+                      probs = seq(from = 0,
+                                  to = 1, length.out = num_knots))
+
+
+d |> 
+  ggplot(aes(x = year, y = doy)) +
+  geom_vline(xintercept = knot_list, col = "snow", alpha = .5) +
+  geom_point(col = "#ffb7c5", alpha = 1/2) +
+  theme_bw() +
+  theme(panel.grid = element_blank(),
+        panel.background = element_rect(fill = "#4f455c")) +
+  labs(x = "Year", y = "Doy")
+```
+
+```{r}
+library(splines)
+
+B <- bs(d2$year,
+        knots = knot_list[-c(1,num_knots)],
+        degree = 3, intercept = T)
+
+str(B)
+
+b <-
+  B |> 
+  data.frame() |> 
+  set_names(str_c(0, 1:9), 10:17) |> 
+  bind_cols(select(d2, year)) |> 
+  pivot_longer(-year,
+               names_to = "bias_function",
+               values_to = "bias")
+
+b |> 
+  ggplot(aes(year, bias, group = bias_function)) +
+  geom_vline(xintercept = knot_list, col = "snow", alpha = .5) +
+  geom_line(col = "#ffb7c5", alpha = .5, linewidth = 1.5) +
+  ylab("Bias value") +
+  theme_bw() +
+ theme(panel.background = element_rect(fill = "#4f455c"), panel.grid = element_blank())
+
+```
+
+```{r}
+d3 <-
+  d2 |> 
+  mutate(B = B) 
+
+d3 |>  glimpse()
+
+
+
+b4.8 <- 
+  brm(data = d3,
+      family = gaussian,
+      doy ~ 1 + B,
+      prior = c(prior(normal(100,10), class = Intercept),
+                prior(normal(0,10), class = b),
+                prior(exponential(1), class = sigma)),
+      iter = 2000, warmup = 1000, chains = 4, cores = 4,
+      seed = 4, file = "fits(b4.8)")
+
+
+print(b4.8)
+```
+
+# Exercises
+
+4E1 - First line
+
+4E2 - 2
+
+4E3
+
+\$\$ Pr(\mu, \sigma \|y)
+=\frac{Pr(y|\mu,\sigma) Pr(\mu) Pr(\sigma)}{\int\int Pr(y|\mu,\sigma) Pr(\mu) Pr(\sigma)d\mu d\sigma}
+
+\$\$ 4E4 Second line
+
+4E5 3
+
+4M1
+
+```{r}
+d <- 
+  tibble(mu = rnorm(1e4, 0,10),
+         sigma = rexp(1e4,1)) |> 
+  mutate(y = rnorm(1e4, mu, sigma))
+glimpse(d)
+
+d |> 
+  ggplot(aes(x = y)) +
+  geom_density(fill = "forestgreen")
+```
+
+4M2
+
+```{r}
+brm(data = d, family = gaussian,
+    formula = y_i = 1 + mu,
+    prior = c(
+                prior(normal(0, 10), class = b),
+                prior(exponential(1), class = sigma)))
+```
+
+4M3 $$
+y \sim Normal(\mu, \sigma) \\
+\mu = \alpha + \beta x_i \\
+\alpha \sim Normal(0,10) \\
+\beta \sim Uniform(1) \\
+\sigma \sim Exponential(1)
+$$ 4M4 $$
+Height_{ij} \sim Normal(\mu_{ij}, \sigma) \\
+\mu _{ij}= \alpha + \beta (y_j - \bar{y}) \\
+\alpha \sim Normal(100,10) \\
+\beta \sim Normal(0,25) \\
+\sigma \sim Exponential(1)
+$$ \alpha = Durchschnittliches Alter im durchschnittlichen Jahr. Slope
+hier sehr weit, da Wachstum vermutlich non linear ist und es etwa zu
+Wachstumschüben kommen könnte.
+
+Simuliert wäre es so:
+
+```{r}
+n <- 50
+
+d <- tibble(
+  group = seq_len(n),
+   alpha = rnorm(n, 100, 10),
+       beta = rnorm(n, 0, 25),
+       sigma = rexp(n, 1)) |> 
+  expand(nesting(group, alpha, beta, sigma), year = c(1,2,3)) |> 
+  mutate(height = rnorm(n(), alpha + beta * (year - mean(year)), sigma))
+
+d |> 
+  ggplot(aes(x = year, y = height, group = group)) +
+  geom_line(col = "firebrick2") +
+  labs(x = "Year", y = "Height")
+```
+
+Naja..., Negative Slopes machen in diesem Kontext eigentlich keinen
+Sinn. Vermutlich sollte ich eher Log-Normal für den Prior nehmen
+
+4M5 Ah okay, ja jetzt weiß ich das Jahr und Größe positiv
+zusammenhängen.
+
+also Zeit für log-normal
+
+$$
+\beta \sim Log-Normal(1,0.5)
+$$
+
+```{r}
+sample <- rlnorm(1e5, 1, 0.5)
+
+boundaries <- mean_hdi(sample, .width = .89) # ofc .89 its a prime!
+
+ggplot() +
+  stat_function(data = tibble(x = c(0, 10)), mapping = aes(x = x),
+                geom = "line", fun = dlnorm,
+                args = list(meanlog = 1, sdlog = 0.5)) +
+  geom_ribbon(data = tibble(x = seq(boundaries$ymin, boundaries$ymax, 0.01)),
+              aes(x = x, ymin = 0, ymax = dlnorm(x, 1, 0.5)),
+              alpha = 0.8, fill = "#ffb7c5") +
+  scale_x_continuous(breaks = seq(0, 10, 2)) +
+  labs(x = expression(beta), y = "Density")
+
+
+n <- 50
+
+d <- tibble(
+  group = seq_len(n),
+   alpha = rnorm(n, 100, 10),
+       beta = rlnorm(n, 1, .5),
+       sigma = rexp(n, 1)) |> 
+  expand(nesting(group, alpha, beta, sigma), year = c(1,2,3)) |> 
+  mutate(height = rnorm(n(), alpha + beta * (year - mean(year)), sigma))
+
+d |> 
+  ggplot(aes(x = year, y = height, group = group)) +
+  geom_line(col = "steelblue") +
+  labs(x = "Year", y = "Height")
+```
+
+4M6 Eine Varianz von 64 wäre eine SD von 8
+
+```{r}
+sqrt(64)
+```
+
+Wenn wir wirklich in unseren Modell dafür kontrollieren wollen, müssten
+wir so vorghene mit dem Prior für \sigma
+
+$$
+\sigma \sim Uniform(0,8)
+$$
+
+```{r}
+n <- 50
+
+d <- tibble(
+  group = seq_len(n),
+   alpha = rnorm(n, 100, 10),
+       beta = rlnorm(n, 1, .5),
+       sigma = runif(n, 0,8)) |> 
+  expand(nesting(group, alpha, beta, sigma), year = c(1,2,3)) |> 
+  mutate(height = rnorm(n(), alpha + beta * (year - mean(year)), sigma))
+
+d |> 
+  ggplot(aes(x = year, y = height, group = group)) +
+  geom_line(col = "brown", alpha = .33) +
+  labs(x = "Year", y = "Height")
+```
+
+4M7
+
+```{r}
+data("Howell1")
+d <- Howell1
+d2 <- d[d$age >= 18,]
+b4.3_1 <- 
+  brm(data = d2,
+      family = gaussian,
+      height ~ 1 + weight,
+      prior = c(prior(normal(178,20), class = Intercept),
+                prior(lognormal(0,1), class = b),
+                prior(uniform(0,50), class = sigma, ub = 50)),
+      iter = 2000, warmup = 1000, chains = 4, cores = 4,
+      seed = 4,
+      file = "fits/b4.3_1")
+
+as_draws_df(b4.3_1) |>
+  as_tibble() |> 
+  select(b_Intercept, b_weight, sigma) |>
+  cov() |>
+  round(digits = 3)
+
+as_draws_df(b4.3) |>
+  as_tibble() |> 
+  select(b_Intercept, b_weight_c, sigma) |>
+  cov() |>
+  round(digits = 3)
+```
+
+4M8
+
+```{r}
+data("cherry_blossoms")
+
+d <- cherry_blossoms
+
+d2 <- 
+  d |> 
+  drop_na()
+
+num_knots <- 45
+knot_list <- quantile(d2$year,
+                      probs = seq(from = 0,
+                                  to = 1, length.out = num_knots))
+library(splines)
+
+B <- bs(d2$year,
+        knots = knot_list[-c(1,num_knots)],
+        degree = 3, intercept = T)
+
+str(B)
+
+b <-
+  B |> 
+  data.frame() |> 
+  set_names(str_c(0, 1:9), 10:47) |> 
+  bind_cols(select(d2, year)) |> 
+  pivot_longer(-year,
+               names_to = "bias_function",
+               values_to = "bias")
+
+b |> 
+  ggplot(aes(year, bias, group = bias_function)) +
+  geom_vline(xintercept = knot_list, col = "snow", alpha = .5) +
+  geom_line(col = "#ffb7c5", alpha = .5, linewidth = 1.5) +
+  ylab("Bias value") +
+  theme_bw() +
+ theme(panel.background = element_rect(fill = "#4f455c"), panel.grid = element_blank())
+
+b4.m8 <- 
+  brm(data = d3,
+      family = gaussian,
+      doy ~ 1 + B,
+      prior = c(prior(normal(100,10), class = Intercept),
+                prior(normal(0,10), class = b),
+                prior(exponential(1), class = sigma)),
+      iter = 2000, warmup = 1000, chains = 4, cores = 4,
+      seed = 4, file = "fits(b4.m8)")
+
+```
+
+4H1
+
+```{r}
+data(Howell1)
+d <- Howell1
+d2 <- d[d$age>=18,]
+m <- map( alist(
+height ~ dnorm( mu , sigma ) , mu <- a + b*weight ,
+a ~ dnorm( 100 , 100 ) ,
+b ~ dnorm( 0 , 10 ) ,
+sigma ~ dunif( 0 , 50 ) ),
+data=d2 )
+
+post <- extract.samples( m ) 
+str(post)
+
+y <- rnorm( 1e5 , post$a + post$b*46.95 , post$sigma )
+mean(y)
+HPDI(y,prob=0.90)
+```
+
+4H2 a)
+
+```{r}
+data("Howell1")
+
+d <- Howell1 |> 
+  filter(age < 18)
+
+glimpse(d)
+
+lm(height ~ weight, data = d ) |> broom::tidy()
+
+
+m <- brm(height ~ 1 + weight, data = d, family = gaussian,
+            prior = c(prior(normal(138, 20), class = Intercept),
+                      prior(lognormal(0, 1), class = b, lb = 0),
+                      prior(exponential(1), class = sigma)),
+            iter = 4000, warmup = 2000, chains = 4, cores = 4, seed = 1234)
+print(m)
+```
+
+Für 1kg wächst ein Kind 2.7cm
+
+b)  
+
+```{r}
+fit <- tibble(weight = prediction::seq_range(d$weight, 100)) |> 
+  mutate(weight_c = weight - mean(d$weight)) |> 
+  add_epred_draws(m) |> 
+  group_by(weight) |> 
+  mean_qi(.epred, .width = .89)
+
+pred <- tibble(weight = prediction::seq_range(d$weight, 100)) %>% 
+  mutate(weight_c = weight - mean(d$weight)) %>%
+  add_predicted_draws(m) %>%
+  group_by(weight) %>%
+  mean_qi(.prediction, .width = 0.89)
+
+ggplot(d, aes(x = weight)) +
+  geom_point(aes(y = height), alpha = 0.4) +
+  geom_ribbon(data = pred, aes(ymin = .lower, ymax = .upper),
+              alpha = 0.2) +
+  geom_lineribbon(data = fit,
+                  aes(y = .epred, ymin = .lower, ymax = .upper),
+                  fill = "darkseagreen", linewidth = 1) +
+  labs(x = "Weight", y = "Height")
+```
+
+Andere Probleme sind (noch) etwas zu schwierig 🤪
