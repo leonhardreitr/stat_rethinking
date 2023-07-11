@@ -26,12 +26,14 @@ data("WaffleDivorce")
 
 d <- WaffleDivorce
 
-d <- 
-  d |> 
-  mutate(d = standardize(Divorce),
-         m = standardize(Marriage),
-         a = standardize(MedianAgeMarriage))
-  
+d <-
+  d |>
+  mutate(
+    d = standardize(Divorce),
+    m = standardize(Marriage),
+    a = standardize(MedianAgeMarriage)
+  )
+
 glimpse(d)
 ```
 
@@ -40,51 +42,61 @@ Plotten yeah boyyyy
 ```{r}
 library(ggrepel)
 
-d |> 
-  ggplot(aes(WaffleHouses/Population, Divorce)) +
-  stat_smooth(method = "lm", fullrange = T, linewidth = .5,
-              col = "yellow4", fill = "yellow4", alpha = .15) +
-  geom_point(size = 1.5, col = "red", alpha = .5) + 
-  geom_text_repel(data = d |> filter(Loc %in%
-  c("ME", "OK", "AR", "AL", "GA", "SC", "NJ")),  
-  aes(label = Loc), 
-  size = 3, seed = 1999) +
-  scale_x_continuous("Waffel Houses per million People", limits = c(0,55)) +
+d |>
+  ggplot(aes(WaffleHouses / Population, Divorce)) +
+  stat_smooth(
+    method = "lm", fullrange = T, linewidth = .5,
+    col = "yellow4", fill = "yellow4", alpha = .15
+  ) +
+  geom_point(size = 1.5, col = "red", alpha = .5) +
+  geom_text_repel(
+    data = d |> filter(Loc %in%
+      c("ME", "OK", "AR", "AL", "GA", "SC", "NJ")),
+    aes(label = Loc),
+    size = 3, seed = 1999
+  ) +
+  scale_x_continuous("Waffel Houses per million People", limits = c(0, 55)) +
   ylab("Divorce Rate") +
-  coord_cartesian(xlim = c(0,50), ylim = c(5,15)) +
-  theme_bw() + theme(panel.grid = element_blank())
-  
+  coord_cartesian(xlim = c(0, 50), ylim = c(5, 15)) +
+  theme_bw() +
+  theme(panel.grid = element_blank())
 ```
 
 ```{r}
 library(tigris)
 
-d_states <- states(cb = T, resolution = "20m") |> 
-  shift_geometry() |> 
-  right_join(d |> 
-               mutate(NAME = Location |> as.character()) |> 
-               select(d:a, NAME)) |> 
+d_states <- states(cb = T, resolution = "20m") |>
+  shift_geometry() |>
+  right_join(d |>
+    mutate(NAME = Location |> as.character()) |>
+    select(d:a, NAME)) |>
   pivot_longer(cols = c("d", "m", "a"), names_to = "variable")
 
-d_states |> 
+d_states |>
   ggplot() +
   geom_sf(aes(fill = value, geometry = geometry),
-          size = 0) +
+    size = 0
+  ) +
   scale_fill_gradient(low = "snow", high = "deeppink4") +
   theme_void() +
-  theme(legend.position = "none", strip.text = element_text(margin = 
-                                                              margin(0,0,.5,0))) +
-  facet_wrap(~ variable, labeller = label_both)
+  theme(legend.position = "none", strip.text = element_text(
+    margin =
+      margin(0, 0, .5, 0)
+  )) +
+  facet_wrap(~variable, labeller = label_both)
 
-d_states %>%
+d_states |>
   ggplot() +
   geom_sf(aes(fill = value, geometry = geometry),
-          size = 0) +
+    size = 0
+  ) +
   scale_fill_gradient(low = "#f8eaea", high = "firebrick4") +
   theme_void() +
-  theme(legend.position = "none",
-        strip.text = element_text(margin = margin(0, 0, .5, 0))) +
-  facet_wrap(~ variable, labeller = label_both) 
+  theme(
+    legend.position = "none",
+    strip.text = element_text(margin = margin(0, 0, .5, 0))
+  ) +
+  facet_wrap(~variable, labeller = label_both)
 ```
 
 In großen Datensätzen korreliert quasi alles miteinader.
@@ -98,17 +110,17 @@ Insbesondere verwendet man MLR für:
   
 ```{r}
 library(patchwork)
-p1 <- d |> 
+p1 <- d |>
   ggplot(aes(Marriage, Divorce)) +
-  geom_smooth(method = "lm",col = "black", fill = "grey") +
+  geom_smooth(method = "lm", col = "black", fill = "grey") +
   geom_point(shape = 1, col = "steelblue", size = 2.5) +
-  labs(x = "Marriage rate", y = "Divorce rate") 
+  labs(x = "Marriage rate", y = "Divorce rate")
 
-p2 <- d |> 
+p2 <- d |>
   ggplot(aes(MedianAgeMarriage, Divorce)) +
-  geom_smooth(method = "lm",col = "black", fill = "grey") +
+  geom_smooth(method = "lm", col = "black", fill = "grey") +
   geom_point(shape = 1, col = "steelblue", size = 2.5) +
-  labs(x = "Median age marriage", y = "Divorce rate") 
+  labs(x = "Median age marriage", y = "Divorce rate")
 
 p1 + p2
 ```
@@ -125,15 +137,35 @@ sd(d$MedianAgeMarriage)
 ```
 
 ```{r}
-b5.1 <- 
-  brm(data = d,
-      family = gaussian,
-      d ~ 1 + a,
-      prior = c(prior(normal(0,0.2), class = Intercept),
-                prior(normal(0,0.5), class = b),
-                prior(exponential(1), class = sigma)),
-      iter = 2000, cores = 4, chains = 4, warmup = 1000,
-      seed = 9, sample_prior = T, file = "fits/b5.1")
+b5.1 <-
+  brm(
+    data = d,
+    family = gaussian,
+    d ~ 1 + a,
+    prior = c(
+      prior(normal(0, 0.2), class = Intercept),
+      prior(normal(0, 0.5), class = b),
+      prior(exponential(1), class = sigma)
+    ),
+    iter = 2000, warmup = 1000, chains = 4, cores = 4,
+    seed = 5,
+    sample_prior = T,
+    file = "fits/b05.01"
+  )
+
+b5.1 <-
+  brm(
+    data = d,
+    family = gaussian,
+    d ~ 1 + a,
+    prior = c(
+      prior(normal(0, 0.2), class = Intercept),
+      prior(normal(0, 0.5), class = b),
+      prior(exponential(1), class = sigma)
+    ),
+    iter = 2000, cores = 4, chains = 4, warmup = 1000,
+    seed = 9, sample_prior = T, file = "fits/b5.1"
+  )
 
 prior <- prior_draws(b5.1)
 
@@ -142,31 +174,35 @@ glimpse(prior)
 
 ```{r}
 set.seed(23)
-prior |> 
-  slice_sample(n = 50) |> 
-  rownames_to_column("draw") |> 
-  expand_grid(a = c(-2,2)) |> 
-  mutate(d = Intercept + b * a) |> 
+prior |>
+  slice_sample(n = 50) |>
+  rownames_to_column("draw") |>
+  expand_grid(a = c(-2, 2)) |>
+  mutate(d = Intercept + b * a) |>
   ggplot(aes(x = a, y = d)) +
   geom_line(aes(group = draw),
-            col = "blue", alpha = .4) +
+    col = "blue", alpha = .4
+  ) +
   labs(x = "Median age marriage (std)", y = "Divorce rate (std)")
 ```
 
 ```{r}
 print(b5.1)
 
-b5.2 <- 
+b5.2 <-
   brm(
     data = d,
     family = gaussian,
     formula = d ~ 1 + m,
-    prior = c(prior(normal(0, 0.2), class = Intercept),
-                prior(normal(0, 0.5), class = b),
-                prior(exponential(1), class = sigma)),
-      iter = 2000, warmup = 1000, chains = 4, cores = 4,
-      seed = 5,
-      file = "fits/b5.2")
+    prior = c(
+      prior(normal(0, 0.2), class = Intercept),
+      prior(normal(0, 0.5), class = b),
+      prior(exponential(1), class = sigma)
+    ),
+    iter = 2000, warmup = 1000, chains = 4, cores = 4,
+    seed = 5,
+    file = "fits/b5.2"
+  )
 ```
 
 Okay bivariate Korrelationen miteinader zu vergleichen bringt recht wenig.
@@ -175,26 +211,30 @@ Wir brauchen etwas um kausale Implikationen aufzuzeichnen --> DAG!
 ```{r}
 library(ggdag)
 dag_coords <-
-  tibble(name = c("A", "M", "D"),
-         x    = c(1, 3, 2),
-         y    = c(2, 2, 1))
+  tibble(
+    name = c("A", "M", "D"),
+    x = c(1, 3, 2),
+    y = c(2, 2, 1)
+  )
 
 p1 <- dagify(M ~ A,
-         D ~ A + M,
-         coords = dag_coords) |> ggdag() + theme_dag()
+  D ~ A + M,
+  coords = dag_coords
+) |> ggdag() + theme_dag()
 
 p2 <- dagify(M ~ A,
-         D ~ A,
-         coords = dag_coords) |> ggdag() + theme_dag()
+  D ~ A,
+  coords = dag_coords
+) |> ggdag() + theme_dag()
 p1 | p2
 
-d |> 
-  select(d:a) |> 
+d |>
+  select(d:a) |>
   psych::lowerCor()
 
 library(dagitty)
 
-dagitty('dag{ D <- A -> M }') |> 
+dagitty("dag{ D <- A -> M }") |>
   impliedConditionalIndependencies()
 ```
 
@@ -207,30 +247,885 @@ MLR Notation:
 - Diesen Parameter mit Prädiktor multiplizieren und in das lineare Modell aufnehmen
 
 ```{r}
-b5.3 <- 
-  brm(data = d, 
-      family = gaussian,
-      d ~ 1 + m + a,
-      prior = c(prior(normal(0, 0.2), class = Intercept),
-                prior(normal(0, 0.5), class = b),
-                prior(exponential(1), class = sigma)),
-      iter = 2000, warmup = 1000, chains = 4, cores = 4,
-      seed = 5,
-      file = "fits/b05.03")
-
-b5.3 <- 
+b5.3 <-
   brm(
     data = d,
     family = gaussian,
     d ~ 1 + m + a,
-    prior = c(prior(normal(0, 0.2), class = Intercept),
-                prior(normal(0, 0.5), class = b),
+    prior = c(
+      prior(normal(0, 0.2), class = Intercept),
+      prior(normal(0, 0.5), class = b),
+      prior(exponential(1), class = sigma)
+    ),
+    iter = 2000, warmup = 1000, chains = 4, cores = 4,
+    seed = 5,
+    file = "fits/b5.3"
+  )
+
+print(b5.3)
+```
+
+ok, aber wie plotte ich multivariate Posteriors?
+
+3 möglichkeiten
+ - predictor residual plots
+   Outcome vs Prädiktor Residuen
+ - posterior prediction plots
+   Model-based Predictions vs Rohe Daten
+ - counterfactual plots
+   implied predictions for imaginary experi-
+ments
+
+```{r}
+b5.4 <-
+  brm(
+    data = d,
+    family = gaussian,
+    m ~ 1 + a,
+    prior = c(
+      prior(normal(0, 0.2), class = Intercept),
+      prior(normal(0, 0.5), class = b),
+      prior(exponential(1), class = sigma)
+    ),
+    iter = 2000, warmup = 1000, chains = 4, cores = 4,
+    seed = 5,
+    file = "fits/b5.4"
+  )
+
+f <- fitted(b5.4) |>
+  data.frame() |>
+  bind_cols(d)
+
+p1 <- f |>
+  ggplot(aes(a, m)) +
+  geom_point(shape = 1, size = 2, col = "#CC79A7") +
+  geom_segment(aes(xend = a, yend = Estimate)) +
+  geom_line(aes(y = Estimate), col = "#CC79A7") +
+  geom_text_repel(
+    data = f |> filter(
+      Loc %in% c("WY", "ND", "ME", "HI", "DC")
+    ),
+    aes(label = Loc),
+    size = 3, seed = 14
+  ) +
+  labs(
+    x = "Age at marriage (std)",
+    y = "Marriage rate (std)"
+  ) +
+  coord_cartesian(ylim = range(d$m)) +
+  theme_bw() +
+  theme(panel.grid = element_blank())
+```
+
+```{r}
+r <- residuals(b5.4) |>
+  data.frame() |>
+  bind_cols(d)
+
+
+r |>
+  ggplot(aes(Estimate, d)) +
+  geom_point(size = 2, shape = 1, col = "steelblue") +
+  stat_smooth(
+    method = "lm", fullrange = T, col = "black", fill = "grey23",
+    alpha = 1 / 5, linewidth = .5
+  ) +
+  geom_vline(xintercept = 0, lty = 2, col = "grey50") +
+  geom_text_repel(
+    data = r |> filter(Loc %in% c("WY", "ND", "ME", "HI", "DC")),
+    aes(label = Loc),
+    size = 3, seed = 5
+  ) +
+  scale_x_continuous(limits = c(-2, 2)) +
+  coord_cartesian(xlim = range(r$Estimate)) +
+  labs(
+    x = "Marriage rate residuals",
+    y = "Divorce rate (std)"
+  ) +
+  theme_bw() +
+  theme(panel.grid = element_blank())
+```
+
+## Posterior prediction plots
+Important to check a model implied predictions vs. the observed data
+
+Für zwei Fragen wichtig:
+ - Passt die Posterior?
+ - Wie sehr irrt der Golem?
+ 
+```{r}
+fitted(b5.3) %>%
+  data.frame() %>%
+  mutate_all(~ . * sd(d$Divorce) + mean(d$Divorce)) %>%
+  bind_cols(d) %>%
+  ggplot(aes(x = Divorce, y = Estimate)) +
+  geom_abline(lty = 2, col = "#000000", linewidth = .5) +
+  geom_point(size = 2, shape = 1, col = "#56B4E9", alpha = .75) +
+  geom_linerange(aes(ymin = Q2.5, ymax = Q97.5),
+    linewidth = .25,
+    col = "#56B4E9"
+  ) +
+  geom_text(
+    data = . %>% filter(Loc %in% c("ID", "UT", "RI", "ME")),
+    aes(label = Loc),
+    hjust = 1, nudge_x = -0.25
+  ) +
+  labs(x = "Observed divorce", y = "Predicted divorce") +
+  theme_bw() +
+  theme(panel.grid = element_blank())
+```
+ 
+```{r}
+N <- 100
+x_real <- rnorm(N)
+x_spur <- rnorm(N, x_real)
+y <- rnorm(N, x_real)
+d_spur <- data.frame(y, x_real, x_spur)
+pairs(d_spur)
+```
+
+```{r}
+d_model <- bf(d ~ 1 + a + m)
+m_model <- bf(m ~ 1 + a)
+
+b5.3_A <-
+  brm(
+    data = d,
+    family = gaussian,
+    d_model + m_model + set_rescor(FALSE),
+    prior = c(
+      prior(normal(0, 0.2), class = Intercept, resp = d),
+      prior(normal(0, 0.5), class = b, resp = d),
+      prior(exponential(1), class = sigma, resp = d),
+      prior(normal(0, 0.2), class = Intercept, resp = m),
+      prior(normal(0, 0.5), class = b, resp = m),
+      prior(exponential(1), class = sigma, resp = m)
+    ),
+    iter = 2000, warmup = 1000, chains = 4, cores = 4,
+    seed = 5,
+    file = "fits/b05.03_A"
+  )
+
+print(b5.3_A)
+
+nd <- tibble(a = seq(from = -2, to = 2, length.out = 30), m = 0)
+
+p1 <-
+  predict(b5.3_A,
+    resp = "d",
+    newdata = nd
+  ) |>
+  data.frame() |>
+  bind_cols(nd) |>
+  ggplot(aes(x = a, y = Estimate, ymin = Q2.5, ymax = Q97.5)) +
+  geom_smooth(
+    stat = "identity",
+    fill = "#0072B2", color = "#D55E00", alpha = 1 / 5, linewidth = 1 / 4
+  ) +
+  labs(
+    subtitle = "Total counterfactual effect of A on D",
+    x = "manipulated A",
+    y = "counterfactual D"
+  ) +
+  coord_cartesian(ylim = c(-2, 2)) +
+  theme_bw() +
+  theme(panel.grid = element_blank())
+
+nd <- tibble(a = seq(from = -2, to = 2, length.out = 30))
+
+p2 <-
+  predict(b5.3_A,
+    resp = "m",
+    newdata = nd
+  ) |>
+  data.frame() |>
+  bind_cols(nd) |>
+  ggplot(aes(x = a, y = Estimate, ymin = Q2.5, ymax = Q97.5)) +
+  geom_smooth(
+    stat = "identity",
+    fill = "#E69F00", color = "#000000", alpha = 1 / 5, linewidth = 1 / 4
+  ) +
+  labs(
+    subtitle = "Counterfactual effect of A on M",
+    x = "manipulated A",
+    y = "counterfactual M"
+  ) +
+  coord_cartesian(ylim = c(-2, 2)) +
+  theme_bw() +
+  theme(panel.grid = element_blank())
+
+p1 + p2 + plot_annotation(title = "Counterfactual plots for the multivariate divorce model")
+```
+
+# Masked relationships
+MLR hilft spurious Association aufzudecken, aber auch dabei den direkten Einfluss mehrer Faktoren festzustellen, wenn kein Einfluss sich in bivariaten Zusammenhängen zeigt, etwa wenn einer positiv, ein anderer  negativ korreliert ist.
+
+```{r}
+data("milk")
+d <- milk
+glimpse(d)
+d <-
+  d |>
+  mutate(
+    K = standardize(kcal.per.g),
+    N = standardize(neocortex.perc),
+    M = standardize(log(mass))
+  ) |>
+  drop_na()
+```
+
+NA's ein Problem, kann Likelihood nicht berechnen --> entfernen
+
+$$
+K_i \sim N(\mu_i,\sigma) \\
+\mu_i = \alpha +\beta_NN_i
+$$
+```{r}
+m5.5_draft <-
+  brm(
+    data = d,
+    family = gaussian,
+    K ~ 1 + N,
+    prior = c(
+      prior(normal(0, 1), class = Intercept),
+      prior(normal(0, 1), class = b),
+      prior(exponential(1), class = sigma)
+    ),
+    iter = 2000, warmup = 1000, chains = 4, cores = 4,
+    seed = 5,
+    sample_prior = T,
+    file = "fits/b5.5_draft"
+  )
+
+print(m5.5_draft)
+
+prior_draws(m5.5_draft) |>
+  slice_sample(n = 50) |>
+  rownames_to_column() |>
+  expand_grid(N = c(-2, 2)) |>
+  mutate(K = Intercept + b * N) %>%
+  ggplot(aes(x = N, y = K)) +
+  geom_line(aes(group = rowname),
+    color = "steelblue", alpha = .4
+  ) +
+  coord_cartesian(ylim = c(-2, 2)) +
+  labs(
+    x = "neocortex percent (std)",
+    y = "kilocal per g (std)",
+    subtitle = "Intercept ~ dnorm(0, 1)\nb ~ dnorm(0, 1)"
+  ) +
+  theme_bw() +
+  theme(panel.grid = element_blank())
+```
+
+```{r}
+b5.5 <-
+  brm(
+    data = d,
+    family = gaussian,
+    K ~ 1 + N,
+    prior = c(
+      prior(normal(0, 0.2), class = Intercept),
+      prior(normal(0, 0.5), class = b),
+      prior(exponential(1), class = sigma)
+    ),
+    iter = 2000, warmup = 1000, chains = 4, cores = 4,
+    seed = 5,
+    sample_prior = T,
+    file = "fits/b5.5"
+  )
+
+print(b5.5)
+
+prior_draws(b5.5) |>
+  slice_sample(n = 50) |>
+  rownames_to_column() |>
+  expand_grid(N = c(-2, 2)) |>
+  mutate(K = Intercept + b * N) %>%
+  ggplot(aes(x = N, y = K)) +
+  geom_line(aes(group = rowname),
+    color = "steelblue", alpha = .4
+  ) +
+  coord_cartesian(ylim = c(-2, 2)) +
+  labs(
+    x = "neocortex percent (std)",
+    y = "kilocal per g (std)",
+    subtitle = "Intercept ~ dnorm(0, 0.2)\nb ~ dnorm(0, .5)"
+  ) +
+  theme_bw() +
+  theme(panel.grid = element_blank())
+
+
+
+
+bind_rows(
+  as_draws_df(m5.5_draft) %>% select(b_Intercept:sigma),
+  as_draws_df(b5.5) %>% select(b_Intercept:sigma)
+) %>%
+  mutate(fit = rep(c("m5.5_draft", "b5.5"), each = n() / 2)) %>%
+  pivot_longer(-fit) %>%
+  group_by(name, fit) %>%
+  summarise(
+    mean = mean(value),
+    ll = quantile(value, prob = .025, na.rm = T),
+    ul = quantile(value, prob = .975, na.rm = T)
+  ) %>%
+  mutate(fit = factor(fit, levels = c("m5.5_draft", "b5.5"))) %>%
+  # plot
+  ggplot(aes(x = mean, y = fit, xmin = ll, xmax = ul)) +
+  geom_pointrange(color = "firebrick") +
+  geom_hline(yintercept = 0, color = "firebrick", alpha = 1 / 5) +
+  labs(
+    x = "posterior",
+    y = NULL
+  ) +
+  theme_bw() +
+  theme(
+    axis.text.y = element_text(hjust = 0),
+    axis.ticks.y = element_blank(),
+    panel.grid = element_blank(),
+    strip.background = element_blank()
+  ) +
+  facet_wrap(~name, ncol = 1)
+
+
+nd <- tibble(neocortex.perc_s = seq(from = -2.5, to = 2, length.out = 30))
+
+fitted(b5.5,
+  newdata = nd,
+  probs = c(.025, .975, .25, .75)
+) |>
+  data.frame() |>
+  bind_cols(nd) |>
+  # world's ugliest plot
+  ggplot(aes(x = neocortex.perc_s, y = Estimate)) +
+  geom_ribbon(aes(ymin = Q2.5, ymax = Q97.5),
+    fill = c("#7A67EE"), alpha = 1 / 4
+  ) +
+  geom_smooth(aes(ymin = Q25, ymax = Q75),
+    stat = "identity",
+    fill = "#7A67EE", col = "#7A6343"
+  ) +
+  geom_point(
+    data = d,
+    aes(x = N, y = K),
+    size = 2, color = ("turquoise1")
+  ) +
+  coord_cartesian(
+    xlim = range(d$N),
+    ylim = range(d$K)
+  ) +
+  labs(
+    x = "neocortex percent (std)",
+    y = "kilocal per g (std)"
+  ) +
+  theme_bw() +
+  theme(panel.grid = element_blank())
+```
+
+```{r}
+b5.6 <- brm(
+  data = d,
+  family = gaussian,
+  formula = K ~ 1 + M,
+  prior = c(
+    prior(normal(0, 0.2), class = Intercept),
+    prior(normal(0, 0.5), class = b),
+    prior(exponential(1), class = sigma)
+  ),
+  iter = 2000, warmup = 1000, seed = 9, chains = 4, cores = 4,
+  sample_prior = T,
+  file = "fits/b6.6"
+)
+
+print(b5.6)
+
+nd <- tibble(M = seq(from = -2.5, to = 2, length.out = 30))
+
+fitted(b5.6,
+  newdata = nd,
+  probs = c(.025, .975, .25, .75)
+) |>
+  data.frame() |>
+  bind_cols(nd) |>
+  # world's ugliest plot
+  ggplot(aes(x = M, y = Estimate)) +
+  geom_ribbon(aes(ymin = Q2.5, ymax = Q97.5),
+    fill = c("darkblue"), alpha = 1 / 4
+  ) +
+  geom_smooth(aes(ymin = Q25, ymax = Q75),
+    stat = "identity",
+    fill = "darkblue", col = "darkblue"
+  ) +
+  geom_point(
+    data = d,
+    aes(x = N, y = K),
+    size = 2, color = ("darkred"), alpha = 1 / 3
+  ) +
+  coord_cartesian(
+    xlim = range(d$N),
+    ylim = range(d$K)
+  ) +
+  labs(
+    x = "Log-mass)",
+    y = "kilocal per g (std)"
+  ) +
+  theme_bw() +
+  theme(panel.grid = element_blank())
+```
+
+```{r}
+b5.7 <- brm(
+  data = d,
+  family = gaussian,
+  formula = K ~ 1 + N + M,
+  prior = c(
+    prior(normal(0, 0.2), class = Intercept),
+    # prior(normal(0,0.5), class = b),
+    prior(normal(0, 0.5), class = b),
+    prior(exponential(1), class = sigma)
+  ),
+  iter = 2000, warmup = 1000, seed = 9, chains = 4, cores = 4,
+  sample_prior = T,
+  file = "fits/b5.7"
+)
+
+print(b5.7)
+```
+
+woah warum ist der Zusammenhang auf einmal anders?
+Ein Prädiktor positiv, der andere negativ korreliert.
+
+
+
+Sie gleichen sich daher gegenseitig aus
+
+```{r}
+dag_it <- function(d) {
+  d |>
+    ggplot(aes(x = x, y = y, xend = xend, yend = yend)) +
+    geom_dag_point(color = "navyblue", alpha = 1 / 4, size = 10) +
+    geom_dag_text(color = "navyblue") +
+    geom_dag_edges(edge_color = "navyblue") +
+    scale_x_continuous(NULL, breaks = NULL, expand = c(0.1, 0.1)) +
+    scale_y_continuous(NULL, breaks = NULL, expand = c(0.2, 0.2))
+}
+
+coord <-
+  tibble(
+    name = c("M", "N", "K"),
+    x = c(1, 3, 2),
+    y = c(2, 2, 1)
+  )
+
+p1 <-
+  dagify(N ~ M,
+    K ~ M + N,
+    coords = coord
+  ) |>
+  dag_it()
+
+# middle DAG
+p2 <-
+  dagify(M ~ N,
+    K ~ M + N,
+    coords = coord
+  ) |>
+  dag_it()
+
+# right DAG
+coord <-
+  tibble(
+    name = c("M", "N", "K", "U"),
+    x = c(1, 3, 2, 2),
+    y = c(2, 2, 1, 2)
+  )
+p3 <-
+  dagify(M ~ U,
+    N ~ U,
+    K ~ M + N,
+    coords = coord
+  ) %>%
+  dag_it() +
+  geom_point(
+    x = 2, y = 2,
+    shape = 1, size = 10, stroke = 1.25, color = "yellow"
+  )
+
+p1 + p2 + p3
+```
+
+Dieses DAG's sind Markov equivalent, alle haben die selben konditionalen Interdepenzen.
+
+```{r}
+coords <-
+  tibble(
+    name = c("M", "N", "K"),
+    x = c(1, 3, 2),
+    y = c(2, 2, 1)
+  )
+
+dagify(N ~ M,
+  K ~ M + N,
+  coords = coords
+) |>
+  dag_it()
+
+n <- 100
+M <- rnorm(n)
+N <- rnorm(n, M)
+K <- rnorm(n, N - M)
+d_sim <- data.frame(K = K, N = N, M = M)
+
+
+n <- 100
+N <- rnorm( n )
+M <- rnorm( n , N)
+K <- rnorm( n , M - N)
+d_sim2 <- data.frame(K=K,N=N,M=M)
+
+n <- 100
+U <- rnorm( n )
+N <- rnorm( n , U)
+M <- rnorm( n , U)
+K <- rnorm( n , N - M)
+d_sim3 <- data.frame(K=K,N=N,M=M)
+
+
+dag5.7 <- dagitty( "dag{ M -> K <- N
+M -> N }" )
+coordinates(dag5.7) <- list( x=c(M=0,K=1,N=2) , y=c(M=0.5,K=1,N=0.5) )
+MElist <- equivalentDAGs(dag5.7)
+
+drawdag(MElist)
+```
+
+# Kategorische Variabeln
+
+Diskret + unordered
+
+```{r}
+data("Howell1")
+d <- Howell1
+```
+
+Indikator Variablen /Dummy Variablen = Mittel um ungeordnete Variablen in quantiativen Modellen zu kodieren
+
+Eine Möglichkeit ist es nun die Dummy Variable einfach direkt ins Modell aufzunehmen. Diese Variable ist 0/1 codiert, gilt natürlich nur für binäre Variablen, und dreht einen Parameter an für die 1 Gruppe und aus für die 0 Gruppe
+
+$$
+h_i \sim Normal (\mu, \sigma) \\
+\mu = \alpha + \beta_mm_i \\
+\alpha \sim Normal (178,20) \\
+\beta_m \sim Normal(0,10) \\
+\sigma \sim Uniform(0,50)
+$$
+
+Es wäre hier also $\mu = \alpha + \beta_mm_i$ wenn $m_i = 1$ und $\mu = \alpha$ wenn $m_i = 0$
+
+$\beta_m$ ist im dem Fall dann der erwartete Unterschied zwischen den zwei Kategorien. $\alpha$ ist der erwartete MW der Gruppe 0. Gruppe 1 ist jetzt unsicherer weil es 2 Parameter hat und damit auch 2 Prior, muss aber theoretisch nicht unsicherer sein
+
+```{r}
+set.seed(4)
+
+priors<- tibble(
+  mu_female = rnorm(1e4, 178,20)) |> 
+  mutate(mu_male = mu_female + rnorm(1e4, 0,20))
+
+priors |> 
+  pivot_longer(everything()) |> 
+  summarise(mean = mean(value),
+            sd = sd(value),
+            ll = quantile(value,probs = 0.025),
+            ul = quantile(value, probs = .975),
+            .by = name) |> 
+  mutate_if(is.double, round, digits = 2)
+
+priors |> 
+  pivot_longer(everything()) |> 
+  ggplot(aes(x = value, col = name, fill = name)) +
+  geom_density(linewidth = 2/3, alpha = 2/3) +
+   scale_fill_manual(NULL, values = c("steelblue", "black")) +
+  scale_color_manual(NULL, values = c("steelblue", "black")) +
+  scale_y_continuous(NULL, breaks = NULL) +
+  xlab("prior predictive distribution for our dummy groups") +
+  theme_bw() +
+  theme(panel.grid = element_blank(),
+        legend.position = c(.82, .83))
+```
+
+Mann ist unsicherer. Sollte aber eigentlich nicht so sein, wir müssen aber bei dem Dummy Ansatz zwangsweise so vorgehen bei 1 kodierter Gruppe
+
+## Index
+Ein vllt besserer Ansatz sind Index variablen
+Index = Integer, which correspond to different categories. Sind bloß Namen,
+but they also let us reference a list of corresponding parameters, one for each category
+
+```{r}
+d <- 
+  d |> 
+  mutate(sex = if_else(male == 1,2,1))
+```
+
+$$
+h_i \sim Normal (\mu, \sigma) \\
+\mu_i = \alpha_{sex[i]}\\
+\alpha_j \sim Normal (178,20), for j = 1..2 \\
+\sigma \sim Uniform(0,50)
+$$
+
+Wir haben nun eine Liste von $\alpha$ Parametern, einer für jeden Wert der Index Variable. Nun können wir alle die selben Prior zuordnen
+
+```{r}
+d <- 
+  d |> 
+  mutate(sex = factor(sex))
+```
+
+```{r}
+b5.8 <- 
+  brm(data = d,
+      family = gaussian,
+      height ~ 0 + sex,
+      prior = c(prior(normal(178, 20), class = b),
+                prior(uniform(0, 50), class = sigma, ub = 50)),
+      iter = 2000, warmup = 1000, chains = 4, cores = 4,
+      seed = 5,
+      file = "fits/b5.8")
+  
+summary(b5.8)
+plot(b5.8)
+```
+
+```{r}
+library(tidybayes)
+
+as_draws_df(b5.8) |> 
+  mutate(diff_fm = b_sex1 - b_sex2) |> 
+  pivot_longer(cols = c(b_sex1:sigma, diff_fm)) |> 
+  group_by(name) |> 
+  mean_qi(value, .width = .89)
+```
+
+### mehrere Gruppen
+Mit Index simpel
+
+```{r}
+data(milk)
+d <- milk
+unique(d$clade)
+
+d <- 
+  d |> 
+  mutate(kcal.per.g_s = (kcal.per.g - mean(kcal.per.g)) / sd(kcal.per.g))
+```
+
+$$
+K_i \sim Normal (\mu_i, \sigma) \\
+\mu_i = \alpha_{Clade[i]} \\
+\alpha \sim Normal(0,0.5)  , for j = 1..4 \\
+\sigma \sim Exponential(1)
+$$
+
+```{r}
+b5.9 <- 
+  brm(data = d, 
+      family = gaussian,
+      kcal.per.g_s ~ 0 + clade,
+      prior = c(prior(normal(0, 0.5), class = b),
                 prior(exponential(1), class = sigma)),
       iter = 2000, warmup = 1000, chains = 4, cores = 4,
       seed = 5,
-      file = "fits/b5.3")
+      file = "fits/b5.9")
 
-print(b5.3)
+mcmc_plot(b5.9, variable = "^b_", regex = T)
 
+library(bayesplot)
+
+color_scheme_set("viridisD")
+
+post <- as_draws_df(b5.9)
+
+post |> 
+  select(starts_with("b_"))  |>  
+  mcmc_intervals(prob = .5,
+                 point_est = "median") +
+  ggthemes::theme_base() +
+  theme(axis.text.y = element_text(hjust = 0),
+        axis.ticks.y = element_blank(),
+        panel.grid = element_blank())
+
+post |> 
+  select(starts_with("b")) |> 
+  set_names(distinct(d, clade) |>  arrange(clade) |>  pull()) 
+
+```
+
+```{r}
+houses <- c("Gryffindor", "Hufflepuff", "Ravenclaw", "Slytherin")
+
+set.seed(63)
+d <-
+  d |>  
+  mutate(house = sample(rep(houses, each = 8), size = n()))
+
+b5.11 <- 
+  brm(data = d, 
+      family = gaussian,
+      bf(kcal.per.g_s ~ 0 + a + h, 
+         a ~ 0 + clade, 
+         h ~ 0 + house,
+         nl = TRUE),
+      prior = c(prior(normal(0, 0.5), nlpar = a),
+                prior(normal(0, 0.5), nlpar = h),
+                prior(exponential(1), class = sigma)),
+      iter = 2000, warmup = 1000, chains = 4, cores = 4,
+      seed = 5,
+      file = "fits/b5.11")
+
+summary(b5.11)
+```
+
+
+# Exercise
+
+5E1
+2 & 4
+
+5E2
+$$
+A \sim Normal(\mu,\sigma) \\
+\mu = \alpha + \beta_LL_i + \beta_pP_i
+$$
+
+5E3
+
+$$
+Phd \sim Normal(\mu,\sigma) \\
+\mu = \alpha + \beta_FF_i + \beta_LL_i
+$$
+
+Beide sollten positiv sein
+
+5E4
+1, 3, 4 & 5
+
+5M1
+Zb Eisverkäufe und Anzahl an Badeunfälle, beides wird durch Jahreszeit erklärt
+
+```{r}
+set.seed(317)
+N <- 1000
+Jahreszeit <- rnorm( N )
+Eis <- rnorm( N , Jahreszeit ) 
+Unfall <- rnorm( N , Jahreszeit ) # vermutlich eigentlich nicht NV
+d <- data.frame(Jahreszeit,Eis,Unfall)
+pairs(d)
+cor(d$Eis, d$Unfall)
+```
+
+5M2
+Noten als Ergebnis von Lernstunden und wie oft man während der Prüfungsphase Party macht
+
+```{r}
+n <- 1e5
+Party <- rnorm( n )
+Lernen <- rnorm( n , Lernen )
+Note <- rnorm( n , 
+               Lernen - Party )
+d_sim <- data.frame(Party, Lernen, Note)
+cor(d_sim$Lernen, d_sim$Note)
+
+lm(Note ~ Lernen + Party, data = d_sim)
+```
+
+5M3
+
+Hohe Scheidunsrate -> Mehr Singles -> Mehr Möglichkeiten neuen Partner zu finden und noch mal zu heiraten. Müssten diese Information (Erneutes Heiraten) ins Modell aufnehmen.
+
+5M4
+```{r}
+lds <- read_csv("lds-data-2021.csv",
+                col_types = cols(.default = col_integer(),
+                                 state = col_character()))  |> 
+  mutate(lds_prop = members / population,
+         lds_per_capita = lds_prop * 100000)
+
+data("WaffleDivorce")
+lds_divorce <- WaffleDivorce  |> 
+  as_tibble()  |> 
+  select(Location, Divorce, Marriage, MedianAgeMarriage)  |> 
+  left_join(select(lds, state, lds_per_capita),
+            by = c("Location" = "state"))  |> 
+  mutate(lds_per_capita = log(lds_per_capita))  |> 
+  mutate(across(where(is.numeric), standardize))  |>  
+  filter(!is.na(lds_per_capita))
+
+b5_M4 <- brm(Divorce ~ 1 + Marriage + MedianAgeMarriage + lds_per_capita,
+               data = lds_divorce, family = gaussian,
+               prior = c(prior(normal(0, 0.2), class = Intercept),
+                         prior(normal(0, 0.5), class = b, coef = Marriage),
+                         prior(normal(0, 0.5), class = b, coef = MedianAgeMarriage),
+                         prior(normal(0, 0.5), class = b, coef = lds_per_capita),
+                         prior(exponential(1), class = sigma)),
+               iter = 4000, warmup = 2000, chains = 4, cores = 4, seed = 99,
+             fit = "fits/b5_M4")
+summary(b5_M4)
+
+spread_draws(b5_M4, `b_.*`, regex = TRUE) |> 
+  pivot_longer(starts_with("b"), names_to = "parameter", values_to = "value") |> 
+  ggplot(aes(value, parameter)) +
+  stat_halfeye(.width = c(.67,.89,.97), fill = "grey50", col = "black") 
+```
+
+5H1
+```{r}
+data(foxes)
+d <- foxes
+
+b_area <- brm(
+  data = d,
+  family = gaussian,
+  weight ~ 1 + area, iter = 2000, warmup = 1000, chains = 4, cores = 4, seed = 9,
+  fit = "fits/b_area"
+)
+
+b_groupsize <- brm(
+  data = d,
+  family = gaussian,
+  weight ~ 1 + groupsize, iter = 2000, warmup = 1000, chains = 4, cores = 4, seed = 9,
+  fit = "fits/b_groupsize"
+)
+
+summary(b_groupsize)
+```
+
+both do not seem to be important [+ Plot missing]
+
+5H2
+```{r}
+b_fox <- brm(
+  data = d,
+  family = gaussian,
+  weight ~ 1 + area + groupsize, iter = 2000, warmup = 1000, chains = 4, cores = 4, seed = 9,
+  fit = "fits/b_fox"
+)
+```
+
+5H3
+```{r}
+b_avgfood <- brm(
+  data = d,
+  family = gaussian,
+  weight ~ 1 + avgfood + groupsize, iter = 2000, warmup = 1000, chains = 4, cores = 4, seed = 9,
+  fit = "fits/b_avgfood"
+)
+
+b_fox_all <- brm(
+  data = d,
+  family = gaussian,
+  weight ~ 1 + area + avgfood + groupsize, iter = 2000, warmup = 1000, chains = 4, cores = 4, seed = 9,
+  fit = "fits/b_fox_all"
+)
 ```
 
