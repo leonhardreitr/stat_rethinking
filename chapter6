@@ -1,0 +1,647 @@
+---
+title: "Chapter 6"
+format: html
+editor_options: 
+  chunk_output_type: console
+theme: cosmo
+editor: 
+  markdown: 
+    wrap: 72
+---
+
+```{r}
+library(rethinking)
+library(brms)
+library(tidyverse)
+library(ggthemes)
+```
+
+Selection distortion effect alda
+ --> Problem von Regression, Collider Bias, Multicoli, post-treatment bias
+ 
+```{r}
+set.seed(1914)
+n <- 200  
+p <- 0.1  
+
+d <-
+  tibble(nw  = rnorm(n, mean = 0, sd = 1),
+         tw = rnorm(n, mean = 0, sd = 1)) |> 
+  mutate(s = nw + tw) %>% 
+  mutate(selected = ifelse(s >= quantile(s, 1 - p), TRUE, FALSE))
+
+head(d)
+
+d |> 
+  filter(selected == TRUE) |> 
+  select(nw,tw) |> 
+  cor()
+
+text <- 
+  tibble(nw = c(2,1),
+         tw = c(2.25, -2.5), 
+  selected = c(TRUE, FALSE),
+  label    = c("selected", "rejected"))
+
+d |> 
+  ggplot(aes(nw, tw, col = selected)) +
+  geom_point(aes(shape = selected), alpha = 3/4) +
+  geom_text(data = text,
+            aes(label = label)) +
+  geom_smooth(data = d |> filter(selected == T),
+              method = "lm", fullrange = T,
+              col = "grey20", se = F, linewidth = .5) +
+  scale_color_colorblind() +
+  scale_shape_cleveland() +
+  scale_x_continuous(limits = c(-3,3.9), expand = c(0,0)) +
+  coord_cartesian(ylim = range(d$tw)) +
+  theme(legend.position = "none")
+```
+ 
+## Mulitkollinearität
+
+= Sehr starke Assozation zwischen mindestens zwei Prädiktoren. Dabei ist nicht die Korrelation, sondern die Assozation konditional auf andere Variablen im Modell.
+
+Die Folge ist, dass im Posterior keine Variabeln miteinander assoziert erscheinen. Aber das Modell funktioniert trd, wir stellen bloß eine dumme Frage
+
+```{r}
+n <- 100
+set.seed(1999)
+
+d <- tibble(
+  height = rnorm(n, mean = 10, sd = 2),
+  leg_prop = runif(n, min = 0.4, max = 0.5)
+) |> 
+  mutate(leg_left = leg_prop * height + rnorm(n, 0, .02),
+         leg_right = leg_prop * height + rnorm(n, 0, .02))
+
+d |> 
+  summarise(r = cor(leg_left, leg_right) |> 
+              round(digits = 4))
+
+d |> 
+  ggplot(aes(leg_left, leg_right)) +
+  geom_point(col = "navy") # damn haha
+
+b6.1 <- brm(
+  data = d,
+  family = gaussian,
+  height ~ 1 + leg_left + leg_right,
+  prior = c(prior(normal(10,100), class = Intercept),
+            prior(normal(2,10), class = b),
+            prior(exponential(1), class = sigma)),
+  chains = 4, iter = 2000, warmup = 1000, cores = 4,
+  fit = "fits/b6.1", seed = 8
+)
+
+summary(b6.1)
+
+library(bayesplot)
+color_scheme_set("pink")
+
+mcmc_plot(b6.1,
+          type = "intervals",
+          prob = .5,
+          prob_outer = .95,
+          point_est = "mean") +
+  labs(title = "that multicol stuff",
+       subtitle = "Idk looks good to me (jk)") +
+  theme(axis.text.y = element_text(hjust = 0),
+        panel.grid.minor = element_blank(),
+        strip.text = element_text(hjust = 0)) 
+```
+
+Ok unser Modell passt, warum sieht es trd so wird aus?
+
+Liegt an der Frage, die wir stellen: Was bringt es uns einen Prädiktor zu kennen, wenn wir bereits alle andere kennen?
+in dem Kontext:
+Was bringt es uns die Länge jedes Beines zu kennen, wenn wir bereits das andere kennen?
+
+```{r}
+post <- as_draws_df(b6.1)
+
+post |> 
+  ggplot(aes(x = b_leg_left, y = b_leg_right)) +
+  geom_point(col = "plum", alpha = .1, size = .5)
+
+# andere Möglichkeit
+post |> 
+  mcmc_scatter(pars = c("b_leg_left", "b_leg_right"),
+               size = .5,
+               alpha = 1*0.1)
+
+post |> 
+  ggplot(aes(x = b_leg_left + b_leg_right, y = 0)) +
+  stat_halfeye(point_interval = median_qi,
+               fill = "forestgreen",
+               .width = .89) +
+  scale_y_continuous(NULL, breaks = NULL) +
+  labs(title = "Sum of of the Beta coefficients")
+```
+
+```{r}
+b6.2 <- brm(
+  data = d,
+  family = gaussian,
+  height ~ 1  + leg_right,
+  prior = c(prior(normal(10,100), class = Intercept),
+            prior(normal(2,10), class = b),
+            prior(exponential(1), class = sigma)),
+  chains = 4, iter = 2000, warmup = 1000, cores = 4,
+  fit = "fits/b6.2", seed = 8
+)
+
+summary(b6.2)
+
+post <- as_draws_df(b6.2)
+
+post |> 
+  ggplot(aes(x = b_leg_right, y = 0)) +
+  stat_halfeye(point_interval = median_qi,
+               fill = "grey42",
+               .width = .89) +
+  scale_y_continuous(NULL, breaks = NULL) +
+  labs(title = "Just one coefficient",
+       subtitle = "Marked by the median and 95% PIs",
+       x = "Right leg")
+```
+
+
+### Mulitcoli Milk
+
+```{r}
+data("milk")
+d <- milk
+rm(milk)
+d <-
+  d |> 
+  mutate(k = rethinking::standardize(kcal.per.g),
+         f = rethinking::standardize(perc.fat),
+         l = rethinking::standardize(perc.lactose))
+
+b6.3 <- 
+  brm(data = d, 
+      family = gaussian,
+      k ~ 1 + f,
+      prior = c(prior(normal(0, 0.2), class = Intercept),
+                prior(normal(0, 0.5), class = b),
+                prior(exponential(1), class = sigma)),
+      iter = 2000, warmup = 1000, chains = 4, cores = 4,
+      seed = 6,
+      file = "fits/b6.03")
+
+posterior_summary(b6.3)[1:3, ] |> round(digits = 2)
+
+b6.4 <- 
+  update(b6.3,
+         newdata = d,
+         formula = k ~ 1 + l,
+         seed = 6,
+         file = "fits/b6.04")
+
+posterior_summary(b6.4)[1:3, ] |> round(digits = 2)
+```
+
+# Posttreatment Bias
+
+Included variable bias
+
+Post-treatment bias: Wie der Name schon verrät primär in Experimenten
+
+```{r}
+set.seed(71)
+
+n <- 100
+
+d <- 
+  tibble(h0        = rnorm(n, mean = 10, sd = 2), 
+         treatment = rep(0:1, each = n / 2),
+         fungus    = rbinom(n, size = 1, prob = .5 - treatment * 0.4),
+         h1        = h0 + rnorm(n, mean = 5 - 3 * fungus, sd = 1))
+
+d |> 
+  pivot_longer(everything()) |> 
+  group_by(name) |> 
+  mean_qi(.width = .89) |> 
+  mutate_if(is.numeric, round, 2)
+```
+
+$$
+h_{1,i} \sim Normal(\mu_i,\sigma) \\
+\mu_i = h_{0,i} \times p
+$$
+
+```{r}
+sim_p <- 
+  tibble(sim_p = rlnorm(n = 1e4, meanlog = 0, sdlog = 0.25))
+
+sim_p |> 
+  mutate(exp_p = exp(sim_p)) |> 
+  gather() |> 
+  
+  ggplot(aes(x = value)) +
+  geom_density(fill = "plum") +
+  scale_x_continuous(breaks = c(0, .5, 1, 1.5, 2, 3, 5)) +
+  scale_y_continuous(NULL, breaks = NULL) +
+  coord_cartesian(xlim = c(0, 6)) +
+  theme(panel.grid.minor.x = element_blank()) +
+  facet_wrap(~ key, scale = "free_y", ncol = 1)
+
+sim_p |> 
+  mutate(exp_p = exp(sim_p)) |> 
+  pivot_longer(everything()) |> 
+  group_by(name) |> 
+  mean_qi(.width = .89) |> 
+  mutate_if(is.double, round, 2)
+
+b6.6 <- 
+  brm(data = d,
+      family = gaussian,
+      h1 ~ 0 + h0,
+      prior = c(prior(lognormal(0, 0.25), class = b, lb = 0),
+                prior(exponential(1), class = sigma)),
+      iter = 2000, warmup = 1000, chains = 4, cores = 4,
+      seed = 6,
+      file = "fits/b6.06")
+
+summary(b6.6)
+
+b6.7 <- brm(
+  data = d,
+  family = gaussian,
+  bf(h1 ~ h0 * (a + t * treatment + f * fungus),
+     a + t + f ~ 1,
+     nl = T),
+  prior = c(prior(lognormal(0, 0.2), nlpar = a, lb = 0),
+                prior(normal(0, 0.5), nlpar = t),
+                prior(normal(0, 0.5), nlpar = f),
+                prior(exponential(1), class = sigma)),
+  iter = 2000, warmup = 1000, chains = 4, cores = 4,
+      seed = 6,
+      file = "fits/b6.07")
+
+summary(b6.7)
+```
+
+Post treatment variablen (Variablen welche durch die Intervention beeinflusst werden) können den echten Effekt maskieren.
+
+Wieso? D-separation!
+
+```{r}
+library(dagitty)
+
+gg_simple_dag <- function(d) {
+  
+  d %>% 
+    ggplot(aes(x = x, y = y, xend = xend, yend = yend)) +
+    geom_dag_point(color = "steelblue", alpha = 1/2, size = 6.5) +
+    geom_dag_text(color = "black") +
+    geom_dag_edges() + 
+    theme_dag()
+  
+}
+
+coords <-
+  tibble(name = c("H0", "T", "F", "H1"),
+         x    = c(1, 5, 4, 3),
+         y    = c(2, 2, 1.5, 1))
+
+dag <-
+  dagify(F ~ T,
+         H1 ~ H0 + F,
+         coords = coords)
+
+dag |> 
+  gg_simple_dag()
+
+impliedConditionalIndependencies(dag)
+
+dag |> 
+  dseparated("T", "H1", "F")
+```
+
+# Collider Bias
+
+```{r}
+coords <-
+  tibble(name = c("T", "S", "N"),
+         x    = c(1, 3, 5),
+         y    = c(1, 1, 1))
+
+dag <-
+  dagify(S ~ T + N,
+         coords = coords)
+
+dag |> 
+  gg_simple_dag()
+```
+
+```{r}
+coords <-
+  tibble(name = c("H", "M", "A"),
+         x    = c(1, 3, 5),
+         y    = c(1, 1, 1))
+
+dag_marriage <-
+  dagify(M ~ H + A,
+         coords = coords)
+
+dag_marriage |> 
+  gg_simple_dag()
+
+d <- sim_happiness(seed = 1977, N_years = 1e3)
+
+precis(d)
+```
+
+$$
+\mu_i = \alpha_{MID[i]} + \beta_AA_i 
+$$
+
+```{r}
+d2 <- d |> 
+  filter(age > 17) |> 
+  mutate(a = (age-18)/(65-18),
+         mid = factor(married + 1, labels = c("single", "married")))
+
+# mit collider
+b6.9 <- 
+  brm(data = d2, 
+      family = gaussian,
+      happiness ~ 0 + mid + a,
+      prior = c(prior(normal(0, 1), class = b, coef = midmarried),
+                prior(normal(0, 1), class = b, coef = midsingle),
+                prior(normal(0, 2), class = b, coef = a),
+                prior(exponential(1), class = sigma)),
+      iter = 2000, warmup = 1000, chains = 4, cores = 4,
+      seed = 6,
+      file = "fits/b6.09")
+
+# ohne collider
+b6.10 <- 
+  brm(data = d2, 
+      family = gaussian,
+      happiness ~ 0 + a,
+      prior = c(prior(normal(0, 2), class = b, coef = a),
+                prior(exponential(1), class = sigma)),
+      iter = 2000, warmup = 1000, chains = 4, cores = 4,
+      seed = 6,
+      file = "fits/b6.10")
+```
+
+## haunted DAG
+Oh no!
+
+```{r}
+n <- 200 
+
+b_gp <- 1  # direct effect of G on P
+b_gc <- 0  # direct effect of G on C
+b_pc <- 1  # direct effect of P on C
+b_u  <- 2  # direct effect of U on P and C
+
+# simulate triads
+set.seed(1)
+d <-
+  tibble(u = 2 * rbinom(n, size = 1, prob = .5) - 1,
+         g = rnorm(n, mean = 0, sd = 1)) %>% 
+  mutate(p = rnorm(n, mean = b_gp * g + b_u * u, sd = 1)) |> 
+  mutate(c = rnorm(n, mean = b_pc * p + b_gc * g + b_u * u, sd = 1))
+
+head(d)
+
+b6.11 <- 
+  brm(data = d, 
+      family = gaussian,
+      c ~ 0 + Intercept + p + g,
+      prior = c(prior(normal(0, 1), class = b),
+                prior(exponential(1), class = sigma)),
+      iter = 2000, warmup = 1000, chains = 4, cores = 4,
+      seed = 6,
+      file = "fits/b6.11")
+
+b6.12 <- 
+  update(b6.11,
+         newdata = d,
+         formula = c ~ 0 + Intercept + p + g + u,
+         seed = 6,
+         file = "fits/b6.12")
+```
+
+# Exercises
+
+## Easy
+
+### 6E1
+Collider Bias
+Post-treatment bias
+Multicoli
+
+### 6E2
+Collider Bias
+
+Suppose we're interested in the relationship between genetic factors (G) and lung disease (D). Assume for a moment that there's no direct causal relationship between G and D. However, both G and D independently increase the likelihood of someone taking up smoking (S). Here, smoking is a "collider" on the pathway between genetic factors and lung disease.
+
+### 6E3
+Fork $X\perp Y|Z$
+
+Descendant, nicht wirklich generel sagbar
+
+Collider X not independent of Y if conditioned by Z
+
+Pipe $X\perp Y|Z$
+
+### 6E4 
+
+A biased sample is like conditioning on a collider in the sense that both can lead to spurious associations between variables that are not actually causally related.
+
+## Mediun
+
+### 6M1
+
+```{r}
+dag_coords <- tibble(name = c("X", "U", "A", "B", "C", "Y", "V"),
+                     x = c(1, 1, 2, 2, 3, 3, 3.5),
+                     y = c(1, 2, 2.5, 1.5, 2, 1, 1.5))
+
+dagify(Y ~ X + C + V,
+       X ~ U,
+       U ~ A,
+       B ~ U + C,
+       C ~ A + V,
+       coords = dag_coords) -> dag
+dag |> 
+  ggplot(aes(x = x, y = y, xend = xend, yend = yend)) +
+  geom_dag_point(data = . %>% filter(name %in% c("U", "V")),
+                 shape = 1, stroke = 2, color = "black") +
+  geom_dag_text(color = "darkred", size = 10) +
+  geom_dag_edges(edge_color = "black", edge_width = 2,
+                 arrow_directed = grid::arrow(length = grid::unit(15, "pt"),
+                                              type = "closed")) +
+  theme_void()
+
+impliedConditionalIndependencies(dag)
+dag <- dagitty("dag { U [unobserved]
+                          V [unobserved]
+                          X -> Y
+                          X <- U <- A -> C -> Y
+                          U -> B <- C
+                          C <- V -> Y }")
+
+adjustmentSets(dag, exposure = "X", outcome = "Y")
+```
+
+### 6M2
+```{r}
+set.seed(1999)
+
+n <- 1000
+d <- tibble(x = rnorm(n)) %>%
+  mutate(z = rnorm(n, mean = x, sd = 0.1),
+         y = rnorm(n, mean = z),
+         across(everything(), standardize))
+
+sim_cor <- cor(d$x, d$z)
+sim_cor
+
+
+b6.m2 <- brm(y ~ 1 + x + z, data = dat, family = gaussian,
+            prior = c(prior(normal(0, 0.2), class = Intercept),
+                      prior(normal(0, 0.5), class = b),
+                      prior(exponential(1), class = sigma)),
+            iter = 4000, warmup = 2000, chains = 4, cores = 4, seed = 1234)
+
+as_draws_df(b6m2)  |> 
+  as_tibble() |> 
+  select(b_Intercept, b_x, b_z, sigma)  |> 
+  pivot_longer(everything())  |> 
+  ggplot(aes(x = value, y = name)) +
+  stat_halfeye(.width = c(0.67, 0.89, 0.97))
+```
+
+Obwohl beide Variablen hoch korreliert sind, scheint Multicol kein Problem zu sein.
+
+### 6M3
+
+Ich denke, dass liegt an den kausalen Ursprung der Variablen (siehe DAG).
+
+Da in diesem Beispiel nur die eine Variable Z das Outcome vorhersagt, fragen wir unseren Golem, was es uns bringt X zu wissen, wenn wir schon Z wissen.
+Da aber nur Z direkt kausal wirkt, ist die Antwort: Nichts. Darum ist b_x auch auf 0 zentriert
+
+### 6M4
+
+```{r}
+dag_lo <- dagitty("dag{ X <- Z <- A -> Y <- X; Y <- Z }")
+adjustmentSets(dag_lo, exposure = "X", outcome = "Y")
+```
+
+```{r}
+dag_ro <- dagitty("dag{ X -> Z <- A -> Y <- X; Y <- Z }")
+adjustmentSets(dag_ro, exposure = "X", outcome = "Y")
+```
+
+```{r}
+dag_lu <- dagitty("dag{ Y -> Z <- A -> X -> Y; X -> Z }")
+adjustmentSets(dag_lu, exposure = "X", outcome = "Y")
+```
+
+```{r}
+dag_ru <- dagitty("dag{ Y <- Z <- A -> X -> Y; X -> Z }")
+adjustmentSets(dag_ru, exposure = "X", outcome = "Y")
+```
+
+## Hard
+
+### 6H1
+
+```{r}
+data("WaffleDivorce")
+d <- WaffleDivorce
+
+waffle_dag <- dagitty("dag { S -> W -> D <- A <- S -> M -> D; A -> M }")
+coordinates(waffle_dag) <- list(x = c(A = 1, S = 1, M = 2, W = 3, D = 3),
+                                y = c(A = 1, S = 3, M = 2, W = 3, D = 1))
+
+ggplot(waffle_dag, aes(x = x, y = y, xend = xend, yend = yend)) +
+  geom_dag_text(color = "blue", size = 10) +
+  geom_dag_edges(edge_color = "plum", edge_width = 2,
+                 arrow_directed = grid::arrow(length = grid::unit(15, "pt"),
+                                              type = "closed")) +
+  theme_void()
+
+adjustmentSets(x = waffle_dag, exposure = "W", outcome = "D")
+
+d <- d |> 
+  as_tibble()  |> 
+  select(D = Divorce,
+         A = MedianAgeMarriage,
+         M = Marriage,
+         S = South,
+         W = WaffleHouses)  |> 
+  mutate(across(-S, standardize),
+         S = factor(S))
+
+b6_h1 <- brm(D ~ 1 + W + S, data = d, family = gaussian,
+                prior = c(prior(normal(0, 0.2), class = Intercept),
+                          prior(normal(0, 0.5), class = b),
+                          prior(exponential(1), class = sigma)),
+                iter = 4000, warmup = 2000,
+                chains = 4, cores = 4, seed = 1234)
+
+post <- as_draws_df(b6_h1)
+
+post |> 
+  ggplot(aes(x = b_W)) +
+  stat_halfeye(.width = c(0.67, 0.89, 0.97), fill = "grey93",
+               col = "red") +
+  labs(x = expression(beta[W]), y = "Density") +
+  theme_black()
+```
+
+
+### 6H2
+
+```{r}
+impliedConditionalIndependencies(waffle_dag)
+
+waff_ci1 <- brm(A ~ 1 + W + S, data = d, family = gaussian,
+                prior = c(prior(normal(0, 0.2), class = Intercept),
+                          prior(normal(0, 0.5), class = b),
+                          prior(exponential(1), class = sigma)),
+                iter = 4000, warmup = 2000, chains = 4, cores = 4, seed = 1234)
+
+waff_ci2 <- brm(D ~ 1 + S + A + M + W, data = d, family = gaussian,
+                prior = c(prior(normal(0, 0.2), class = Intercept),
+                          prior(normal(0, 0.5), class = b),
+                          prior(exponential(1), class = sigma)),
+                iter = 4000, warmup = 2000, chains = 4, cores = 4, seed = 1234)
+
+waff_ci3 <- brm(M ~ 1 + W + S, data = d, family = gaussian,
+                prior = c(prior(normal(0, 0.2), class = Intercept),
+                          prior(normal(0, 0.5), class = b),
+                          prior(exponential(1), class = sigma)),
+                iter = 4000, warmup = 2000, chains = 4, cores = 4, seed = 1234)
+
+lables <- c(expression("Model 1:"~beta[W]),
+          expression("Model 2:"~beta[S]),
+          expression("Model 3:"~beta[W]))
+
+bind_rows(
+  gather_draws(waff_ci1, b_W) |>
+    ungroup() |>
+    mutate(model = "ICI 1"),
+  gather_draws(waff_ci2, b_S1) |>
+    ungroup() |>
+    mutate(model = "ICI 2"),
+  gather_draws(waff_ci3, b_W) |>
+    ungroup() |>
+    mutate(model = "ICI 3")
+) |>
+  ggplot(aes(x = .value, y= model, fill = model)) +
+  stat_halfeye(.width = c(0.67, 0.89, 0.97)) +
+  scale_y_discrete(labels = labels) +
+  labs(x = "Parameter Estimate", y = "Implied Conditional Independency") +
+  theme_tidybayes() +
+  scale_fill_few()
+```
+
