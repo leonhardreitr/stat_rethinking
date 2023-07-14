@@ -1,0 +1,709 @@
+---
+title: "Chapter 7"
+format:
+  html:
+    theme: cosmo
+    toc: true
+editor_options: 
+  chunk_output_type: console
+---
+
+Nicht Ockhams Klinge, sondern Ulysses Kompass!
+
+Zwei fundamentale statistische Fehler:
+
+-   Overfitting = Learning too much from data
+-   Underfitting = Learning too little from data
+
+Konfundierte Modelle können bessere in der Vorhersage sein, als kausal richtige
+
+Was sollen wir also tun? Zwei Möglichkeiten:
+
+Regularizing priors (aka penalized likelihood in Freq)
+
+Usage of scoring device, Information criteria, cross validation
+
+# Das Parameter Problem
+
+Wenn kausale Inferenz einem wurscht ist und man nur Vorhersagen treffen möchte, ist es dann okay einfach alle möglichen Variablen ins Modell zu hauen? Nein! Weil: 1. Der Model Fit steigt mit der Anzahl an Parameter, egal ob es wirklich Sinn macht.
+
+Sehr häufig, zb bei uns PsychologInnen, wird $R^2$ verwendet.
+
+Aka "Erklärte Varianz" hat die Formel:
+
+$$
+R^2 = \frac{var(outcome) -var(residuals)}{var(outcome)} = 1 -\frac{var(residuals)}{var(outcome)}
+$$
+
+$R^2$ steigt wenn man Paramter hinzufügt, selbst wenn es nur zufällige Zahlen sind. Taugt daher eher wenig zur Modellselektion
+
+```{r}
+R2_is_bad <- function(brm_fit, seed = 7,...){
+  set.seed(seed)
+  p <- predict(brm_fit, summary = F, ...)
+  r <- d$brain_std - apply(p, 2, mean)
+  1 - rethinking::var2(r) / rethinking::var2(d$brain_std)
+}
+```
+
+2.  Weiter haben komplexe Modelle mit vielen Parameter einen sehr hohen In-Sample-Fit, aber häufig einen niedrigen out-of-sample-Fit. Simple Modelle haben naturgemäß das gegenteilige Problems
+
+## More Parameters (almost) always improve Fit
+
+Overfitting = Modell lernt **zu** viel von Daten
+
+```{r}
+library(tidyverse)
+library(rcartocolor)
+
+(
+  d <- 
+  tibble(species = c("afarensis", "africanus", "habilis", "boisei", "rudolfensis", "ergaster", "sapiens"), 
+         brain   = c(438, 452, 612, 521, 752, 871, 1350), 
+         mass    = c(37.0, 35.5, 34.5, 41.5, 55.5, 61.0, 53.5))
+  )
+
+
+library(ggrepel)
+
+theme_set(
+  theme_classic() +
+    theme(text = element_text(family = "Courier"),
+          panel.background = element_rect(fill = alpha(carto_pal(7, "BurgYl")[3], 1/4)))
+)
+
+d |> 
+  ggplot(aes(x =  mass, y = brain, label = species)) +
+  geom_point(color = carto_pal(7, "BurgYl")[5]) +
+  geom_text_repel(size = 3, color = carto_pal(7, "BurgYl")[7], family = "Courier", seed = 438) +
+  labs(subtitle = "Average brain volume by body\nmass for six hominin species",
+       x = "body mass (kg)",
+       y = "brain volume (cc)") +
+  xlim(30, 65)
+
+d <- 
+  d |> 
+  mutate(mass_std = mass - mean(mass)/sd(mass),
+         brain_std = brain/max(brain))
+```
+
+Unser Modell:
+
+$$
+beta_i \sim Normal(\mu_i, \sigma) \\
+\mu = \alpha + \beta_{mi} \\
+\alpha \sim Normal(0.5,1) \\
+\beta \sim Normal(0,10) \\
+\sigma \log-normal(0,1)
+$$
+
+```{r}
+library(brms)
+
+b7.1 <-   
+  brm(data = d, 
+      family = gaussian,
+      brain_std ~ 1 + mass_std,
+      prior = c(prior(normal(0.5, 1), class = Intercept),
+                prior(normal(0, 10), class = b),
+                prior(lognormal(0, 1), class = sigma)),
+      iter = 2000, warmup = 1000, chains = 4, cores = 4,
+      seed = 7,
+      file = "fits/b7.01")
+
+R2_is_bad(b7.1)
+```
+
+```{r}
+# quadratic
+b7.2 <- 
+  update(b7.1,
+         newdata = d, 
+         formula = brain_std ~ 1 + mass_std + I(mass_std^2),
+         iter = 2000, warmup = 1000, chains = 4, cores = 4,
+         seed = 7,
+         file = "fits/b7.02")
+
+# cubic
+b7.3 <- 
+  update(b7.1,
+         newdata = d, 
+         formula = brain_std ~ 1 + mass_std + I(mass_std^2) + I(mass_std^3),
+         iter = 2000, warmup = 1000, chains = 4, cores = 4,
+         seed = 7,
+         control = list(adapt_delta = .9),
+         file = "fits/b7.03")
+
+
+# fourth-order
+b7.4 <- 
+  update(b7.1,
+         newdata = d, 
+         formula = brain_std ~ 1 + mass_std + I(mass_std^2) + I(mass_std^3) + I(mass_std^4),
+         iter = 2000, warmup = 1000, chains = 4, cores = 4,
+         seed = 7,
+         control = list(adapt_delta = .995),
+         file = "fits/b7.04")
+
+# fifth-order
+b7.5 <- 
+  update(b7.1,
+         newdata = d, 
+         formula = brain_std ~ 1 + mass_std + I(mass_std^2) + I(mass_std^3) + I(mass_std^4) + I(mass_std^5),
+         iter = 2000, warmup = 1000, chains = 4, cores = 4,
+         seed = 7,
+         control = list(adapt_delta = .99999),
+         file = "fits/b7.05")
+
+custom_normal <- custom_family(
+  "custom_normal", dpars = "mu",
+  links = "identity",
+  type = "real"
+)
+
+stan_funs  <- "real custom_normal_lpdf(real y, real mu) {
+  return normal_lpdf(y | mu, 0.001);
+}
+real custom_normal_rng(real mu) {
+  return normal_rng(mu, 0.001);
+}
+" 
+
+stanvars <- stanvar(scode = stan_funs, block = "functions")
+
+b7.6 <- 
+  brm(data = d, 
+      family = custom_normal,
+      brain_std ~ 1 + mass_std + I(mass_std^2) + I(mass_std^3) + I(mass_std^4) + I(mass_std^5) + I(mass_std^6),
+      prior = c(prior(normal(0.5, 1), class = Intercept),
+                prior(normal(0, 10), class = b)),
+      iter = 2000, warmup = 1000, chains = 4, cores = 4,
+      seed = 7,
+      stanvars = stanvars,
+      file = "fits/b07.06")
+
+expose_functions(b7.6, vectorize = TRUE)
+```
+
+# Entropie und Accuracy
+
+Ok wie schaffen wir jetzt Balance zwische Over und under fitiing? Brauchen ein Kriterium für Modellperformance. Dieses ist unsere Ziel.
+
+Wir brauchen eine Messskala für die Distanz von perfekter Accuracy (brauchen dafür Informationstheorie)
+
+Dann müssen wir Devianz als ein Maß der relativen Distanz von perfekter Accuracy einführen. Nur out-of-sample devianz ist für uns interessant.
+
+## Firing the weather person
+
+Accuracy ist von der Definition des Ziels abhängig.
+
+Dabei müssen wir uns über zwei Dinge Gedanken machen:
+
+\_ Kosten-nutzen - Accuracy in context
+
+Wollen log-prob haben
+
+## Information und Unsicherheit
+
+Information = die Reduktion von Unsicherheit, wenn wir über ein Outcome lernen
+
+Dabei müssen die Messungen: - Kontinuierlich sein - Mit der Anzahl an Möglichen Events steigen - Additiv sein
+
+Welche Funktion hat all das? Informations Entropie!
+
+$$
+ H(p) = -E\log(p_i) = - \sum^n_{n=1}p_ilog(p_i)
+$$
+
+Die Unsicherheit in einer Wahrscheinlichkeitsverteilung ist die durchschnittliche Log-Wahrscheinlichkeit eines Events
+
+$$
+  H(p) = -(p_1\log(p_1) + p_2\log(p_2))
+$$
+
+```{r}
+p <- c(0.3,0.7)
+-sum(p*log(p))
+
+H <- function(prob){
+  -sum(prob*log(prob))
+}
+
+
+abu <- c(0.01,.99)
+H(abu)
+
+
+winter <- c(.7,.15,.15)
+H(winter)
+```
+
+WIr können nun also Unsicherheit $(H)$ berechnen. Nun ist es möglich zu sagen, wie schwer es ist das Ziel zu treffen. Aber wie können wir jetzt sagen, wie weit unser Modell vom Ziel entfernt ist? Durch Divergenz!
+
+
+::: {#d}
+Divergenz = Die zusätzliche Unsicherheit die entsteht, wenn ich eine Wahrscheinlichkeitsverteilung verwende um eine andere zu beschreiben
+:::
+
+Häufig Kullback-Leibler Divergenz genannt
+
+$$
+D_{KL}(p,q)= \sum_ip_i(\log(p_i)-\log(q_i)) = \sum_ip_i\log(\frac{p_i}{q_i})
+$$
+p = Echte Wahrscheinlichkeit, q = Wahrscheinlichkeit des Modells
+
+Die Kullback-Leibler-Divergenz ist also der durchschnittliche Unterschied in der log-Prob zwischen Ziel(p) und Model(q). Also quasi einfach der Unterschied zwischen zwei $H's$
+
+Wenn:
+$$
+P = Q -> D_{KL}(p,q) = D_{KL}(p,p) = 0
+$$
+Aber wozu das ganze nochmal?
+
+1. Um die Distanz von unserem Modell und dem Ziel zu messen. Dies geht via Kullback-Leibler-Divergenz
+
+2. Um die Divergenz zu estimaten
+
+1 erledigt, 2 als nächstes:
+
+Divergenz für zu Devianz:
+
+Wir kennen meistens nur q (Divergenz (H) unseres Modells), aber nie p, die Divergenz unseres Ziels.
+
+Wir wissen also nie wo unser Ziel ist.
+Da wir aber meist nur die Differenz zwischen verschieden Kandidaten, etwa q und r vergleichen, können wir schätzen wie weit q und r voneinander entfernt sind (p rechnet sich durch die zwei $E\log(p_i)$ fast raus. Wir können dann sagen, ob q oder r näher am Ziel ist.
+
+Wir vergleichen dann die avg. log-prob jedes Modells. Allerdings wird die absolute Magnitude nicht interpretierbar sein, sondern nur die Differenz zwischen den Modellen sagt etwas aus.
+
+So können wir etwa den totalen score für modell q berechnen:
+
+$$
+S(q) = \sum_i\log(q_i)
+$$
+
+Wie machen wir das jetzt aber für Bayes? In Bayes sind wir ja an der gesamten Verteilung interessiert. Wir verwenden also die gesamte Posterior. 
+Wir berechnen den log der avg prob für jede Beobachtung $i$, wobei der Avg über die gesamte Posterior geht. Wir berechnen also die log-pointwise-predictive-density. In diesem Fall sind größere Werte besser, bei Devianz (lppd * -2) kleinere
+
+```{r}
+log_lik(b7.1) |> sum()
+log_lik(b7.5) |> sum() # niedrige Werte sind hier besser weil es die Devianz ist nicht die Divergenz!!!
+```
+
+Okay lppd hat aber ein ähnliches Problem woe $R^2$: Bei steigender Modelkomplexität wird es immer besser
+
+```{r}
+my_lppd <- function(brms_fit) {
+  
+  log_lik(brms_fit) |>
+    data.frame() |>
+    pivot_longer(everything(),
+                 values_to = "logprob") |>
+    mutate(prob = exp(logprob)) |>
+    group_by(name) |>
+    summarise(log_probability_score = mean(prob) |>log()) |>
+    summarise(total_log_probability_score = sum(log_probability_score))
+  
+}
+
+tibble(name = str_c("b7.", 1:5)) |>
+  mutate(brms_fit = purrr::map(name, get)) |>
+  mutate(lppd = purrr::map(brms_fit, ~ my_lppd(.))) |>
+  unnest(lppd) # passt so vermutlich?
+```
+
+Grund ist, dass wir hier Trainingsdaten predikitv vorhersagen!
+
+Uns interessiert aber der out of sample score
+
+Wenn wir ein Modell auf Daten fitten wird daraus unser Trainingssample
+Wir estimaten Parameter und können mit diesen dann Outcomes in einem neuen Sample preciten. Dem Test-Sample
+
+ 1. Wir haben ein Trainings-sample mit N 
+ 2. Wir berechnen die Posterior und berechnen den Score $D_{train}$
+ 3. Ein anderes Sample mit N, das Test-Sample
+ 4. Berechnen den Score des Test-Samples mit der Post des Training-Samples, der Score ist dann $D_{test}$
+ 
+# Regularizing 
+
+Overfitting = Modell wird zu excited by the training sample
+
+Eine Möglichkeit dies zu mindern ist via regularizing prior. Kann aber auch zu underfitting führen wenn zu skeptisch, müssen daher fine-tunen.
+
+MLM verwenden quasi automatisch adaptive Regulisierung, wobei sie selber lernen, wie skeptisch sie sein müssen.
+
+# Vorhersage-Accuracy vorhersagen
+
+Die meiste Zeit haben wir kein out-of-sample, also wie können wir performance vorhersagen?. Cross Validation und Informationkriterium versuchen dies vorherzusagen. Sind mathematisch ein bisschen verschieden, führen aber zum quasi selben Ergebnis.
+
+## Kreuzvalidierung
+
+Lassen immer einen kleinen Teil unseres Modells aus und testen dann die Performance. So genannte "Folds" (Data chunks). Das Modell soll einen Fold vorhersagen, nach dem es auf auf alle anderen folds trainiert wurde.
+
+Mininum Folds = 2, max = n
+
+Wie viele Folds? Gute Frage, meistens alle bis auf einen = Leave-One-Out-Cross-Validation.
+Ist aber computional super expensiv. Zb. 1000 Folds = 1000 mal das modell berechnen.
+
+Gibt Gsd clevere Tricks: Man kann die "Importance" jeder Beobachtung verwenden um die Post zu berechnen. Importance = Manche Beobachtungen haben eine größere Wirkung auf die Post, als andere. Nettes Universum lässt uns dies ohne refitting berechnen. Importance wird oft auch weight bezeichnet. 
+Eine unerwartete Beobachtung ist wichtiger/mehr weight, als eine erwartete und sollte daher einen größeren Effekt auf die Post haben.
+
+Mit den Weights kann man die out-of-sample accuracy berechnen.
+
+Pareto-Smooth-Importance-Sampling (PSIS).
+Technik um die Importance-Weights reliabler zu machen. Benutzt die Pareto-Verteilung,
+Hat viele Vorteile:
+ - Provides feedback about it's own validity
+ - Computed point by point, können daher den SE berechnen.
+ 
+ $$
+ s_{PSIS} = \sqrt{Nvar(psis_i)}
+ $$
+## Information Kriterium
+
+Berechnen quasi die out-of-sample Kullnack-Leibler-Divergenz 
+
+$$
+AIC = D_{train} + 2p = -2lppd + 2p
+$$
+
+p = number of Parameter, daher mehr parameter = höhere Devianz (schlechtish)
+
+AIC teilt uns mit, dass die Dimensionalität der Post die natürliche Tendenz eines Modells zum Overfitting zeigt (gutes Deutsch) Komplexere Modelle overfitten daher häufiger
+
+AIC veraltet, nur reliabel wenn:
+
+ - Flat priors, overwhelmed by likelihood
+ - Post annährungsweise multivariate Gaussisch
+ - N >> k (parameter)
+ 
+Vor allem flat priors sind ein Problem. Gibt zwar auch das Devianz-Informations-Kriterium, welches Punkt 1 löst, aber 2 + 3 noch als Probleme hat.
+
+Das Widely Applicable Information-Criterion (WAIC) macht keine Ahnahme über die Post shape. Gibt die OOS-Divergenz an, welche bei einem großen Sample zu CV-Approximation wird.
+
+Ist quasi einfach die lppd + penalty term
+
+$$
+WAIC(y,\theta) = -2(lppd - \sum_ivar_{\theta}\log p(y_i|\theta))
+$$
+
+y = Beobachtungen $\theta$ = Post. Am Ende ist der Penalty Term welcher bedeutet: Berechne die log-prob Varianz für jede Beobachtung i und dann summiere diese Varianzen für den totalen Penalty
+
+Jede Beobachtung hat also seinen eigenen Penalty Score. Da diese Overfitting risk messen, können wir die Overfitting-Risk einer jeden Beobachtung feststellen.
+
+Penalty term wird manchmal auch effective number of parameter genannt. Macht heutzutage nicht mehr wirklich sinn. Nicht die Anzahl an Parameter ist für overfitting relevant, sondern die Beziehungen der Parameter untereinander.
+
+WAIC und PSIS sind beide pointwise
+
+```{r}
+library(rethinking)
+data(cars)
+m <- quap(
+  alist(
+    dist ~ dnorm(mu,sigma),
+    mu <- a + b*speed,
+    a ~ dnorm(0,100),
+    b ~ dnorm(0,10),
+    sigma ~ dexp(1)
+  ), data = cars
+)
+set.seed(94)
+
+post <- extract.samples(m, n = 1000)
+
+n <- 1e3
+
+logprob <- sapply(1:n, 
+                  function(s){
+                    mu <- post$a[s] + post$b[s]*cars$speed
+                    dnorm(cars$dist, mu, post$sigma[s], log = T)
+                  })
+
+n_cases <- nrow(cars)
+lppd <- sapply(1:n_cases, function(i){
+  log_sum_exp(logprob[i,])-log(n)})
+
+
+pWAIC <- sapply(1:n_cases, function(i) var(logprob[i,]))
+
+-2*(sum(lppd) - sum(pWAIC))
+
+waic_vec <- -2*(lppd - pWAIC)
+sqrt(n_cases*var(waic_vec))
+
+```
+
+## Comparing CV, PSIS, WAIC
+PSIS + WAIC sind bei Linearen Regression ziemlich gleich gut. Am besten beide verwenden und vergleichen.
+
+# Model comparison
+
+Model selelection:
+Man hat mehrere Modelle, sucht das mit dem geringsten Informationskriterium aus. KEINE GUTE IDEE
+
+Darum Model comparison verwenden!
+
+## Model mis-selection
+
+```{r}
+b6.6 <- readRDS("fits/b6.06.rds")
+b6.7 <- readRDS("fits/b6.07.rds")
+b6.8 <- readRDS("fits/b06.08.rds")
+
+b6.7 <- add_criterion(b6.7, criterion = "waic")
+b6.7$criteria$waic
+
+b6.6 <- add_criterion(b6.6, criterion = "waic")
+b6.8 <- add_criterion(b6.8, criterion = "waic")
+
+w <- loo_compare(b6.6, b6.7, b6.8, criterion = "waic")
+
+print(w, simplify = F)
+
+b6.6 <- add_criterion(b6.6, criterion = "loo")
+b6.7 <- add_criterion(b6.7, criterion = "loo")
+b6.8 <- add_criterion(b6.8, criterion = "loo")
+
+# compare the WAIC estimates
+loo_compare(b6.6, b6.7, b6.8, criterion = "loo") |>
+  print(simplify = F)
+
+n <- length(b6.7$criteria$waic$pointwise[, "waic"])
+
+tibble(waic_b6.7 = b6.7$criteria$waic$pointwise[, "waic"],
+       waic_b6.8 = b6.8$criteria$waic$pointwise[, "waic"]) |>
+  mutate(diff = waic_b6.7 - waic_b6.8) |>
+  summarise(diff_se = sqrt(n * var(diff)))
+
+w[, 7:8] |>
+  data.frame() |>
+  rownames_to_column("model_name") |>
+  mutate(model_name = fct_reorder(model_name, waic, .desc = T)) |>
+  
+  ggplot(aes(x = waic, y = model_name, 
+             xmin = waic - se_waic, 
+             xmax = waic + se_waic)) +
+  geom_pointrange(color = carto_pal(7, "BurgYl")[7], 
+                  fill = carto_pal(7, "BurgYl")[5], shape = 21) +
+  labs(title = "My custom WAIC plot",
+       x = NULL, y = NULL) +
+  theme(axis.ticks.y = element_blank())
+```
+
+## Outlieres and other illusions
+
+```{r}
+data("WaffleDivorce")
+
+d <-
+  WaffleDivorce |> 
+  mutate(d = rethinking::standardize(Divorce),
+         m = rethinking::standardize(Marriage),
+         a = rethinking::standardize(MedianAgeMarriage))
+
+b5.1 <- 
+  brm(data = d, 
+      family = gaussian,
+      d ~ 1 + a,
+      prior = c(prior(normal(0, 0.2), class = Intercept),
+                prior(normal(0, 0.5), class = b),
+                prior(exponential(1), class = sigma)),
+      iter = 2000, warmup = 1000, chains = 4, cores = 4,
+      seed = 5,
+      sample_prior = T,
+      file = "fits/b5.01")
+
+b5.2 <- 
+  brm(data = d, 
+      family = gaussian,
+      d ~ 1 + m,
+      prior = c(prior(normal(0, 0.2), class = Intercept),
+                prior(normal(0, 0.5), class = b),
+                prior(exponential(1), class = sigma)),
+      iter = 2000, warmup = 1000, chains = 4, cores = 4,
+      seed = 5,
+      file = "fits/b5.02")
+
+b5.3 <- 
+  brm(data = d, 
+      family = gaussian,
+      d ~ 1 + m + a,
+      prior = c(prior(normal(0, 0.2), class = Intercept),
+                prior(normal(0, 0.5), class = b),
+                prior(exponential(1), class = sigma)),
+      iter = 2000, warmup = 1000, chains = 4, cores = 4,
+      seed = 5,
+      file = "fits/b5.03")
+
+
+b5.1 <- add_criterion(b5.1, criterion = "loo")
+b5.2 <- add_criterion(b5.2, criterion = "loo")
+b5.3 <- add_criterion(b5.3, criterion = "loo")
+
+
+loo_compare(b5.1, b5.2, b5.3, criterion = "loo") |> 
+  print(simplify = F)
+
+b5.3 <- add_criterion(b5.3, "waic", file = "fits/b5.03")
+
+tibble(pareto_k = b5.3$criteria$loo$diagnostics$pareto_k,
+       p_waic   = b5.3$criteria$waic$pointwise[, "p_waic"],
+       Loc      = pull(d, Loc)) |> 
+  
+  ggplot(aes(x = pareto_k, y = p_waic, color = Loc == "ID")) +
+  geom_vline(xintercept = .5, linetype = 2, color = "black", alpha = 1/2) +
+  geom_point(aes(shape = Loc == "ID")) +
+  geom_text(data = . %>% filter(p_waic > 0.5),
+            aes(x = pareto_k - 0.03, label = Loc),
+            hjust = 1) +
+  scale_color_manual(values = carto_pal(7, "BurgYl")[c(5, 7)]) +
+  scale_shape_manual(values = c(1, 19)) +
+  labs(subtitle = "Gaussian model (b5.3)") +
+  theme(legend.position = "none")
+```
+
+```{r}
+b7.3t <- 
+  brm(data = d,
+      family = student,
+      bf(d ~ 1 + m + a, nu = 2),
+      prior = c(prior(normal(0, 0.2), class = Intercept),
+                prior(normal(0, 0.5), class = b),
+                prior(exponential(1), class = sigma)),
+      iter = 2000, warmup = 1000, chains = 4, cores = 4,
+      fit = "fits/b7.3t")
+print(b7.3t)
+```
+
+# Practice
+
+## 7E1
+ Information = Reduction in uncertainty when we learn about an outcome
+ 
+ Soll kontinuierlich sein, mit der Anzahl an parameter steigen und additiv sein
+ 
+## 7E2
+
+```{r}
+p <- c(.3,.7)
+
+-sum(p*log(p)) 
+```
+
+## 7E3
+
+```{r}
+p <- c(.2,.25,.25,.3)
+-sum(p*log(p)) 
+```
+
+## 7E4
+
+```{r}
+p <- c(1/3,1/3,1/3)
+-sum(p*log(p)) 
+```
+
+## 7M1
+
+$$
+AIC = D_{train} + 2p = -2lppd + 2p
+$$
+
+p = number of Parameter, daher mehr parameter = höhere Devianz (schlechtish)
+
+AIC teilt uns mit, dass die Dimensionalität der Post die natürliche Tendenz eines Modells zum Overfitting zeigt (gutes Deutsch) Komplexere Modelle overfitten daher häufiger
+
+AIC veraltet, nur reliabel wenn:
+
+ - Flat priors, overwhelmed by likelihood
+ - Post annährungsweise multivariate Gaussisch
+ - N >> k (parameter)
+ 
+Vor allem flat priors sind ein Problem. Gibt zwar auch das Devianz-Informations-Kriterium, welches Punkt 1 löst, aber 2 + 3 noch als Probleme hat.
+
+Das Widely Applicable Information-Criterion (WAIC) macht keine Ahnahme über die Post shape. Gibt die OOS-Divergenz an, welche bei einem großen Sample zu CV-Approximation wird.
+
+Ist quasi einfach die lppd + penalty term
+
+$$
+WAIC(y,\theta) = -2(lppd - \sum_ivar_{\theta}\log p(y_i|\theta))
+$$
+
+WAIC ist für mehr dinge anwendbar (duh)
+
+## 7M2
+
+Model selektion: Aus mehrere Modellen das mit dem besten Informationskriterium nehmen
+
+Model comparison: Das modell auswählen, was kausal und informationstheoretisch sinn macht
+
+## 7M3
+
+Sehen wir uns die Formel an:
+
+$$
+WAIC(y,\theta) = -2(lppd - \sum_ivar_{\theta}\log p(y_i|\theta))
+$$
+
+und ja kp
+
+## 7M4
+
+Der Penalty term wird kleiner, da die Varianz der log-prob ebenfalls kleiner wird
+
+## 7M5
+
+Skeptische Prior sind weniger anfällig auf extreme Ergebnisse, da wir sie so anpassen können, dass sie unserem Wissensstand entsprechen
+
+## 7M6
+
+Sind die Priors aber zu streng, erhalten wir in anbetracht neuer daten quasi wieder nur die prior als post zurück
+
+## 7H1
+```{r}
+data("Laffer")
+
+d <- Laffer |> 
+  mutate(across(everything(), standardize),
+         tax_rate2 = tax_rate^2)
+rm(Laffer)
+
+b_line <- 
+  brm(
+    data = d,
+    family = gaussian,
+    tax_revenue ~ 1 + tax_rate,
+    prior = c(prior(normal(0, 0.2), class = Intercept),
+                          prior(normal(0, 0.5), class = b),
+                          prior(exponential(1), class = sigma)),
+                iter = 4000, warmup = 2000, chains = 4, cores = 4, seed = 1)
+
+b_curve <- brm(tax_revenue ~ 1 + tax_rate + tax_rate2, data = d,
+                family = gaussian,
+                prior = c(prior(normal(0, 0.2), class = Intercept),
+                          prior(normal(0, 0.5), class = b),
+                          prior(exponential(1), class = sigma)),
+                iter = 4000, warmup = 2000, chains = 4, cores = 4, seed = 1)
+
+b_spline <- brm(tax_revenue ~ 1 + s(tax_rate, bs = "bs"), data = d,
+                family = gaussian,
+                prior = c(prior(normal(0, 0.2), class = Intercept),
+                          prior(normal(0, 0.5), class = b),
+                          prior(normal(0, 0.5), class = sds),
+                          prior(exponential(1), class = sigma)),
+                iter = 4000, warmup = 2000, chains = 4, cores = 4, seed = 1,
+                control = list(adapt_delta = 0.95))
+
+
+library(loo)
+
+b_line <- add_criterion(b_line, criterion = c("loo", "waic"))
+b_curve <- add_criterion(b_curve, criterion = c("loo", "waic"))
+b_spline <- add_criterion(b_spline, criterion = c("loo", "waic"))
+
+loo_compare(b_line, b_curve, b_spline, criterion = "waic")
+
+loo_compare(b_line, b_curve, b_spline, criterion = "loo")
+
+```
+
