@@ -1,0 +1,96 @@
+---
+title: "Chapter 8"
+format: html
+theme: cosmo
+editor_options: 
+  chunk_output_type: console
+---
+
+## Binomail regression
+
+Binomial distribution
+
+$$
+y \sim Binomial(n,p)
+$$
+
+n = Versuche, p = Wahrscheinlichkeit erfolgreicher Versuch
+
+zwei unterarten:
+ - logistic regression: data im single trial format (outcome 0/1)
+ - aggregierte binomial regression (outcome, 0 bis n)
+ 
+```{r}
+#| message: false
+data(chimpanzees, package = "rethinking")
+d <- chimpanzees
+rm(chimpanzees)
+library(tidyverse)
+library(flextable)
+
+d |> 
+  distinct(prosoc_left, condition) |> 
+  mutate(description = str_c(
+    "Two food items on ", c(
+      "rechts und kein partner",
+      "links und kein partner",
+      "rechts und partner",
+      "links und partner"
+    )
+  )) |> 
+  flextable() |> 
+  width(width = c(1,1,4))
+
+d <- 
+  d |> 
+  mutate(treatment = factor(1 + prosoc_left + 2 * condition)) |> 
+  mutate(labels = factor(
+    treatment,
+    levels = 1:4,
+    labels = c("r/n", "l/n", "r/p", "l/p")
+  ))
+  
+d |> count(condition, treatment, prosoc_left)
+
+library(brms)
+b11.1 <-
+  brm(data = d, 
+      family = binomial,
+      pulled_left | trials(1) ~ 1,
+      prior(normal(0, 10), class = Intercept),
+      seed = 11,
+      sample_prior = T,
+      file = "fits/b11.01")
+
+b11.1 <- 
+  brm(data = d,
+      family = binomial,
+      pulled_left | trials(1) ~ 1,
+      prior(normal(0, 10), class = Intercept),
+      seed = 11,
+      sample_prior = T,
+      file = "fits(b11.01)")
+print(b11.1)
+
+library(ggthemes)
+library(wesanderson)
+wes_palette("Cavalcanti1")
+
+theme_set(
+  theme_default() + 
+    theme_tufte() +
+    theme(plot.background = element_rect(fill = wes_palette("Cavalcanti1")[3],
+                                         color = wes_palette("Cavalcanti1")[3]))
+)
+
+prior_draws(b11.1) |> 
+  mutate(p = inv_logit_scaled(Intercept)) |> 
+  
+  ggplot(aes(x = p)) +
+  geom_density(fill = "black",
+               linewidth = 0, adjust = .1) +
+  scale_y_continuous(NULL, breaks = NULL) +
+  labs(x = "A prior probability to pull left")
+```
+ 
+ 
