@@ -92,5 +92,254 @@ prior_draws(b11.1) |>
   scale_y_continuous(NULL, breaks = NULL) +
   labs(x = "A prior probability to pull left")
 ```
+
+Those priors are not really useful
+
+```{r}
+b11.1b <- 
+  brm(data = d,
+      family = binomial,
+      pulled_left | trials(1) ~ 1,
+      prior(normal(0, 1.5), class = Intercept),
+      seed = 11,
+      sample_prior = T,
+      file = "fits(b11.01b)")
+print(b11.1)
+
+# wrangle
+bind_rows(prior_draws(b11.1),
+          prior_draws(b11.1b)) |> 
+  mutate(p = inv_logit_scaled(Intercept),
+         w = factor(rep(c(10, 1.5), each = n() / 2),
+                    levels = c(10, 1.5))) |> 
+  
+  # plot
+  ggplot(aes(x = p, fill = w)) +
+  geom_density(linewidth = 0, alpha = 3/4, adjust = 0.1) +
+  scale_fill_manual(expression(italic(w)), values = wes_palette("Moonrise2")[c(4, 1)]) +
+  scale_y_continuous(NULL, breaks = NULL) +
+  labs(title = expression(alpha%~%Normal(0*", "*italic(w))),
+       x = "prior prob pull left")
+
+bind_rows(
+  prior_draws(b11.1),
+  prior_draws(b11.1b)) |> 
+  mutate(p = inv_logit_scaled(Intercept),
+         w = factor(
+           rep(c(10,1.5), each = n()/2),
+           levels = c(10,1.5)
+         )) |> 
+  
+  ggplot(aes(x = p, fill = w)) +
+  geom_density(linewidth = 0,
+               alpha = 3/4,
+               adjust = .1) +
+  scale_fill_manual(expression(italic(w)),
+                    values = wes_palette("Moonrise2")[c(4,1)]) +
+  scale_y_continuous(NULL, breaks = NULL) +
+  labs(
+    title = expression(alpha%~%Normal(0*", "*italic(w))),
+    x = "A priori probability to pull the left lever"
+  )
+
+d <-
+  d |> 
+  mutate(actor = factor(actor))
+
+b11.4 <- 
+  brm(data = d, 
+      family = binomial,
+      bf(pulled_left | trials(1) ~ a + b,
+         a ~ 0 + actor, 
+         b ~ 0 + treatment,
+         nl = TRUE),
+      prior = c(prior(normal(0, 1.5), nlpar = a),
+                prior(normal(0, 0.5), nlpar = b)),
+      iter = 2000, warmup = 1000, chains = 4, cores = 4,
+      seed = 11,
+      file = "fits/b11.04")
+
+b11.4 <- 
+  brm(
+    data = d,
+    family = binomial,
+    bf(pulled_left | trials(1) ~ a + b,
+       a ~ 0 + actor,
+       b ~ 0 + treatment,
+       nl = TRUE),
+    prior = c(prior(normal(0,1.5), nlpar = a),
+              prior(normal(0,0.5), nlpar = b)),
+    iter = 2000, warmup = 1000, chains = 4, cores = 4,
+    seed = 99, file = "fits/b11.04"
+  )
+
+print(b11.4)
+```
+
+```{r}
+library(tidybayes)
+
+post <- as_draws_df(b11.4)
+
+post |> 
+  pivot_longer(contains("actor")) |> 
+  mutate(probability = inv_logit_scaled(value),
+         actor       = factor(str_remove(name, "b_a_actor"),
+                              levels = 7:1)) |> 
+  
+  ggplot(aes(x = probability, y = actor)) +
+  geom_vline(xintercept = .5, color = wes_palette("Moonrise2")[1], linetype = 3) +
+  stat_pointinterval(.width = .95, size = 1/2,
+                     color = wes_palette("Moonrise2")[4]) +
+  scale_x_continuous(expression(alpha[actor]), limits = 0:1) +
+  ylab(NULL) +
+  theme(axis.ticks.y = element_blank())
+
+tx <- c("R/N", "L/N", "R/P", "L/P")
+
+post |> 
+  select(contains("treatment")) |> 
+  set_names("R/N","L/N","R/P","L/P") |> 
+  pivot_longer(everything()) |>
+  mutate(probability = inv_logit_scaled(value),
+         treatment   = factor(name, levels = tx)) |> 
+  mutate(treatment = fct_rev(treatment)) |> 
+  
+  ggplot(aes(x = value, y = treatment)) +
+  geom_vline(xintercept = 0, color = wes_palette("Moonrise2")[2], linetype = 3) +
+  stat_pointinterval(.width = .95, size = 1/2,
+                     color = wes_palette("Moonrise2")[4]) +
+  labs(x = expression(beta[treatment]),
+       y = NULL) +
+  theme(axis.ticks.y = element_blank())
+
+post |> 
+  select(contains("treatment")) |> 
+  set_names("R/N","L/N","R/P","L/P") |> 
+  pivot_longer(everything()) |> 
+  mutate(p = inv_logit_scaled(value),
+         treatment = factor(name, levels = tx)) |> 
+  mutate(treatment = fct_rev(treatment)) |> 
+  
+  ggplot(aes(x = value, y = treatment)) +
+  geom_vline(xintercept = 0,
+             col = wes_palette("Royal1")[2], lty = 3) +
+  stat_pointinterval(.width = .89,
+                     size = .5,
+                     col = wes_palette("Royal1")[3]) +
+  labs(x = expression(beta[treatment]),
+       y = NULL) +
+  theme(axis.ticks.y = element_blank())
+```
+
+
+```{r}
+post |> 
+  mutate(db13 = b_b_treatment1 - b_b_treatment3,
+         db24 = b_b_treatment2 - b_b_treatment4) |> 
+  pivot_longer(db13:db24) |>
+  mutate(diffs = factor(name, levels = c("db24", "db13"))) |> 
+  
+  ggplot(aes(x = value, y = diffs)) +
+  geom_vline(xintercept = 0, color = wes_palette("Moonrise2")[2], linetype = 3) +
+  stat_pointinterval(.width = .95, size = 1/2,
+                     color = wes_palette("Moonrise2")[4]) +
+  labs(x = "difference",
+       y = NULL) +
+  theme(axis.ticks.y = element_blank())
+
+post |> 
+  mutate(
+    db13 = b_b_treatment1 - b_b_treatment3,
+    db24 = b_b_treatment2 - b_b_treatment4
+  ) |> 
+  pivot_longer(db13:db24) |> 
+  mutate(
+    diffs = factor(name, levels = c("db24", "db13"))
+  ) |> 
+  
+  ggplot(aes(x = value, y = diffs)) +
+  geom_vline(xintercept = 0, col = "snow", lty = 3) +
+  stat_pointinterval(.width = .89,
+                     size = 1/2,
+                     col = "#000000") +
+  labs(x = "Difference", y = NULL) +
+  theme(axis.ticks.y = element_blank())
+```
  
- 
+
+```{r}
+d |>
+  group_by(actor, treatment) |>
+  summarise(proportion = mean(pulled_left)) |> 
+  filter(actor == 1)
+
+d |> 
+  summarise(prop = mean(pulled_left),
+            .by = c(actor, treatment)) |> 
+  filter(actor == 1)
+```
+
+```{r}
+library(patchwork)
+p1 <-
+  d |>
+  group_by(actor, treatment) |>
+  summarise(proportion = mean(pulled_left)) |> 
+  left_join(d |> distinct(actor, treatment, labels, condition, prosoc_left),
+            by = c("actor", "treatment")) |> 
+  mutate(condition = factor(condition)) |> 
+  
+  ggplot(aes(x = labels, y = proportion)) +
+  geom_hline(yintercept = .5, color = wes_palette("Moonrise2")[3]) +
+  geom_line(aes(group = prosoc_left),
+            linewidth = 1/4, color = wes_palette("Moonrise2")[4]) +
+  geom_point(aes(color = condition),
+             size = 2.5, show.legend = F) + 
+  labs(subtitle = "observed proportions")
+
+p1 <- 
+  d |> 
+  summarise(proportion = mean(pulled_left),
+            .by = c(actor, treatment)) |> 
+  left_join(d |> distinct(actor, treatment, labels, condition, prosoc_left),
+            by = c("actor", "treatment")) |> 
+  mutate(condition = factor(condition)) |> 
+  
+  ggplot(aes(x = labels, y = proportion)) +
+  geom_hline(yintercept = .5, col = "snow") +
+  geom_line(aes(group = prosoc_left),
+            lwd = 1/4, color = "#000000") +
+  geom_point(aes(col = condition), size = 1.25 * 2, show.legend = F) +
+  labs(subtitle = "Observed proportions")
+
+nd <- 
+  d |> 
+  distinct(actor, treatment, labels, condition, prosoc_left)
+
+p2 <-
+  fitted(b11.4,
+         newdata = nd) |> 
+  data.frame() |> 
+  bind_cols(nd) |> 
+  mutate(condition = factor(condition)) |> 
+  
+  ggplot(aes(x = labels, y = Estimate, ymin = Q2.5, ymax = Q97.5)) +
+  geom_hline(yintercept = .5, color = "snow") +
+  geom_line(aes(group = prosoc_left),
+            linewidth = 1/4, color = wes_palette("Moonrise2")[4]) +
+  geom_pointrange(aes(color = condition),
+                  fatten = 2.5, show.legend = F) + 
+  labs(subtitle = "posterior predictions")
+
+
+(p1 / p2) &
+  scale_color_manual(values = wes_palette("Moonrise2")[c(2:1)]) &
+  scale_y_continuous("proportion left lever", 
+                     breaks = c(0, .5, 1), limits = c(0, 1)) &
+  xlab(NULL) &
+  theme(axis.ticks.x = element_blank(),
+        panel.background = element_rect(fill = alpha("white", 1/10), linewidth = 0)) &
+  facet_wrap(~ actor, nrow = 1, labeller = label_both)
+```
+
