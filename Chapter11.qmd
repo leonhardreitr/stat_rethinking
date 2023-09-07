@@ -74,14 +74,17 @@ print(b11.1)
 
 library(ggthemes)
 library(wesanderson)
-wes_palette("Cavalcanti1")
 
 theme_set(
-  theme_default() + 
-    theme_tufte() +
-    theme(plot.background = element_rect(fill = wes_palette("Cavalcanti1")[3],
-                                         color = wes_palette("Cavalcanti1")[3]))
-)
+  theme_base(base_size = 12) +
+    theme(text = element_text(family = "Times"),
+          axis.text = element_text(family = "Times"),
+          axis.ticks = element_line(linewidth = 0.25),
+          axis.ticks.length = unit(0.1, "cm"),
+          panel.background = element_rect(linewidth = 0.1),
+          plot.background = element_blank(),
+          )
+  )
 
 prior_draws(b11.1) |> 
   mutate(p = inv_logit_scaled(Intercept)) |> 
@@ -341,5 +344,353 @@ p2 <-
   theme(axis.ticks.x = element_blank(),
         panel.background = element_rect(fill = alpha("white", 1/10), linewidth = 0)) &
   facet_wrap(~ actor, nrow = 1, labeller = label_both)
+```
+
+```{r}
+d <-
+  d |> 
+  mutate(side = factor(prosoc_left + 1),  # right 1, left 2
+         cond = factor(condition + 1))    # no partner 1, partner 2
+
+d_aggregated <-
+  d %>%
+  group_by(treatment, actor, side, cond) %>%
+  summarise(left_pulls = sum(pulled_left)) %>% 
+  ungroup()
+
+d_aggregated %>%
+  head(n = 8)
+
+d_aggregated <- 
+  d |> 
+  group_by(treatment, actor, side, cond) |> 
+  summarise(left_pulls = sum(pulled_left)) |> 
+  ungroup()
+```
+
+```{r}
+b11.6 <- 
+  brm(data = d_aggregated, 
+      family = binomial,
+      bf(left_pulls | trials(18) ~ a + b,
+         a ~ 0 + actor, 
+         b ~ 0 + treatment,
+         nl = TRUE),
+      prior = c(prior(normal(0, 1.5), nlpar = a),
+                prior(normal(0, 0.5), nlpar = b)),
+      iter = 2000, warmup = 1000, chains = 4, cores = 4,
+      seed = 11,
+      file = "fits/b11.06")
+
+b11.6 <- 
+  brm(data = d_aggregated,
+      family = binomial,
+      bf(left_pulls | trials(18) ~ a + b,
+         a ~ 0 + actor,
+         b ~ 0 + treatment,
+         nl = TRUE),
+      prior = c(prior(normal(0,1.5), nlpar = a),
+                prior(normal(0,0.5), nlpar = b)),
+      iter = 2000, warmup = 1000, chains = 4, cores = 4,
+      seed = 99, file = "fits/b11.06")
+```
+
+```{r}
+# this is just for fancy annotation
+text <-
+  tibble(value = c(1.4, 2.6),
+         name  = "b_a_actor7",
+         fit   = c("b11.6", "b11.4"))
+
+# rope in the posterior draws and wrangle
+bind_rows(as_draws_df(b11.4),
+          as_draws_df(b11.6)) %>% 
+  mutate(fit = rep(c("b11.4", "b11.6"), each = n() / 2)) %>% 
+  pivot_longer(b_a_actor1:b_b_treatment4) %>% 
+  
+  # plot
+  ggplot(aes(x = value, y = name, color = fit)) +
+  stat_pointinterval(.width = .95, size = 2/3,
+                     position = position_dodge(width = 0.5)) +
+  scale_color_colorblind() +
+  geom_text(data = text,
+            aes(label = fit),
+            family = "Times", position = position_dodge(width = 2.25)) +
+  labs(x = "posterior (log-odds scale)",
+       y = NULL) +
+  theme(axis.ticks.y = element_blank(),
+        legend.position = "none")
+```
+
+```{r}
+data(UCBadmit, package = "rethinking")
+d <- UCBadmit
+rm(UCBadmit)
+
+print(d)
+
+d <- 
+  d %>%  
+  mutate(gid  = factor(applicant.gender, levels = c("male", "female")),
+         case = factor(1:n()))
+
+d <- 
+  d |> 
+  mutate(gid = factor(applicant.gender,
+                      levels = c("male", "female")),
+         case = factor(1:n()))
+```
+
+$$
+A \sim Binomial(N_i, p_i) \\
+logit(p_i) = \alpha_{GID[i]} \\
+\alpha_j \sim Normal(0,1.5)
+$$
+
+```{r}
+b11.7 <- 
+  brm(data = d,
+      family = binomial,
+      admit | trials(applications) ~ 0 + gid,
+      prior = prior(normal(0,1.5), class = b),
+      chains = 4, cores = 4, iter = 2000, warmup = 1000, file = "fits/b11.07")
+
+print(b11.7)
+
+b11.7 |> 
+  as_draws_df() |> 
+  mutate(diff_a = b_gidmale - b_gidfemale,
+         diff_b = inv_logit_scaled(b_gidmale) - inv_logit_scaled(b_gidfemale)) |> 
+  pivot_longer(starts_with("d")) |> 
+  group_by(name) |> 
+  mean_qi(value, .width = .89)
+```
+
+```{r}
+p <- 
+  predict(b11.7) |> 
+  data.frame() |> 
+  bind_cols(d)
+text <- 
+  d |> 
+  summarise(case = mean(as.numeric(case)),
+            admit = mean(admit/applications) + .5,
+            .by = dept) 
+
+p |> 
+  ggplot(aes(x = case, y = admit / applications)) +
+  geom_pointrange(aes(y    = Estimate / applications,
+                      ymin = Q2.5     / applications ,
+                      ymax = Q97.5    / applications),
+                  color = "grey34",
+                  shape = 1, alpha = 1/2) +
+  geom_point(color = "black") +
+  geom_line(aes(group = dept),
+            color = "black") +
+  geom_text(data = text,
+            aes(y = admit, label = dept),
+            color = "black",
+            family = "serif") +
+  scale_y_continuous("Proportion admitted", limits = 0:1) +
+  ggtitle("Posterior validation check") +
+  theme(axis.ticks.x = element_blank())
+```
+
+## poisson regression
+
+Poisson = binomial ohne upper bound
+
+$Np$ und Varianz $Np(1-p)$
+
+```{r}
+tibble(y = rbinom(1e5,1e3, 1/1e3)) |> 
+  summarise(mean = mean(y),
+            var = var(y))
+```
+
+MW und Varianz sind quasi ident, spezielle form der binomial verteilung namens poisson
+
+$$
+y \sim Poisson(\lambda)
+$$
+$\lambda$ ist der Erwartunngswert des Outcomes y und auch gleichzeitig die erwartete Varianz
+
+Wir benutzen wieder log links als Link-Funktion
+
+$$
+y \sim Poisson(\lambda) \\
+\log(\lambda_i) = \alpha + \beta_(x_i - \bar{x})
+$$
+
+```{r}
+data(Kline, package = "rethinking")
+d <- Kline
+rm(Kline)
+print(d)
+```
+
+minimun sample size = Anti bayesian lies. Wenn wir den Prior zurückbekommen, dann ist das sample zu klein, sonst nicht
+
+```{r}
+d <- 
+  d |> 
+  mutate(log_pop_std = (log(population) - mean(log(population))) / sd(log(population)),
+         cid         = contact)
+
+print(d)
+```
+
+```{r}
+tibble(x = c(3,22),
+       y = c(.055, .04),
+       meanlog = c(0,3),
+       sdlog = c(10, .5)) %>%
+  expand_grid(number = seq(from = 0, to = 100, length.out = 200)) |> 
+  mutate(density = dlnorm(number, meanlog, sdlog),
+         group = str_c("alpha%~%Normal(", meanlog, ", ",sdlog, ")")) |> 
+  
+  ggplot(aes( fill = group, col = group)) +
+  geom_area(aes(x = number, y = density),
+            alpha = .75, lwd = 0, position = "identity") +
+  geom_text(data = . %>% group_by(group) %>% slice(1),
+            aes(x = x, y = y, label = group),
+            family = "Times", parse = T,  hjust = 0) +
+  scale_fill_colorblind() +
+  scale_color_colorblind() +
+  scale_y_continuous(NULL, breaks = NULL) +
+  xlab("Mean number of tools") +
+  theme(legend.position = "none")
+
+n <- 100
+a <- rnorm(n, 3, .05)
+b <- rnorm(n, 0, 10)
+plot(NULL, xlim = c(-2,2), ylim = c(0,100))
+
+for (i in 1:n) curve(exp( a[i] + b[i]*x), add = T, col = "blue")
+
+n <- 100
+a <- rnorm(n, 3, .05)
+b <- rnorm(n, 0, .2)
+plot(NULL, xlim = c(-2,2), ylim = c(0,100))
+
+for (i in 1:n) curve(exp( a[i] + b[i]*x), add = T, col = "blue")
+
+set.seed(99)
+
+prior <-
+  tibble(i = 1:n,
+         a = rnorm(n, mean = 3, sd = 0.5),
+         b = rnorm(n, mean = 0, sd = 0.2)) |> 
+  expand_grid(x = seq(from = log(100), to = log(200000), length.out = 100))
+
+# left
+p1 <-
+  prior |> 
+  ggplot(aes(x = x, y = exp(a + b * x), group = i)) +
+  geom_line(linewidth = 1/4, alpha = 2/3,
+            color = "grey32") +
+  labs(subtitle = expression(beta%~%Normal(0*', '*0.2)),
+       x = "log population",
+       y = "total tools") +
+  coord_cartesian(xlim = c(log(100), log(200000)),
+                  ylim = c(0, 500))
+# right
+p2 <-
+  prior |> 
+  ggplot(aes(x = exp(x), y = exp(a + b * x), group = i)) +
+  geom_line(linewidth = 1/4, alpha = 2/3,
+            color = "#000000") +
+  labs(subtitle = expression(beta%~%Normal(0*', '*0.2)),
+       x = "population",
+       y = "total tools") +
+  coord_cartesian(xlim = c(100, 200000),
+                  ylim = c(0, 500))
+
+# combine
+p1 | p2
+```
+
+```{r}
+b11.8 <- 
+  brm(data = d,
+      family = poisson,
+      total_tools ~ 1,
+      prior(normal(3,0.5), class = Intercept),
+      iter = 2000, warmup = 1e3, chains = 1+3, cores = 6 - 2,
+      file = "fits/b11.08")
+
+b11.9 <- 
+  brm(data = d,
+      family = poisson,
+      bf(total_tools ~ a + b * log_pop_std,
+         a + b ~ 0 + cid,
+         nl = TRUE),
+      prior = c(prior(normal(3, 0.5), nlpar = a),
+                prior(normal(0, 0.2), nlpar = b)),
+      prior(normal(3,0.5), class = Intercept),
+      iter = 2000, warmup = 1e3, chains = 1+3, cores = 6 - 2,
+      file = "fits/b11.09")
+
+b11.8 <- add_criterion(b11.8, "loo")
+b11.9 <- add_criterion(b11.9, "loo")
+
+loo_compare(b11.8, b11.9, criterion = "loo") %>% print(simplify = F)
+
+cultures <- c("Hawaii", "Tonga", "Trobriand", "Yap")
+
+library(ggrepel)
+
+nd <-
+  distinct(d, cid) %>% 
+  expand_grid(log_pop_std = seq(from = -4.5, to = 2.5, length.out = 100))
+
+f <- 
+  fitted(b11.9,
+         newdata = nd,
+         probs = c(.055, .945)) %>%
+  data.frame() %>%
+  bind_cols(nd)
+
+p1 <-
+  f %>%
+  ggplot(aes(x = log_pop_std, group = cid, color = cid)) +
+  geom_smooth(aes(y = Estimate, ymin = Q5.5, ymax = Q94.5, fill = cid),
+              stat = "identity",
+              alpha = 1/4, linewidth = 1/2) +
+  geom_point(data = bind_cols(d, b11.9$criteria$loo$diagnostics),
+             aes(y = total_tools, size = pareto_k),
+             alpha = 4/5) +
+  geom_text_repel(data = 
+                    bind_cols(d, b11.9$criteria$loo$diagnostics) %>% 
+                    filter(culture %in% cultures) %>% 
+                    mutate(label = str_c(culture, " (", round(pareto_k, digits = 2), ")")),
+                  aes(y = total_tools, label = label), 
+                  size = 3, seed = 11, color = "black", family = "Times") +
+  labs(x = "log population (std)",
+       y = "total tools") +
+  coord_cartesian(xlim = range(b11.9$data$log_pop_std),
+                  ylim = c(0, 80))
+
+p2 <-
+  f %>%
+  mutate(population = exp((log_pop_std * sd(log(d$population))) + mean(log(d$population)))) %>% 
+
+  ggplot(aes(x = population, group = cid, color = cid)) +
+  geom_smooth(aes(y = Estimate, ymin = Q5.5, ymax = Q94.5, fill = cid),
+              stat = "identity",
+              alpha = 1/4, linewidth = 1/2) +
+  geom_point(data = bind_cols(d, b11.9$criteria$loo$diagnostics),
+             aes(y = total_tools, size = pareto_k),
+             alpha = 4/5) +
+  scale_x_continuous("population", breaks = c(0, 50000, 150000, 250000)) +
+  ylab("total tools") +
+  coord_cartesian(xlim = range(d$population),
+                  ylim = c(0, 80))
+
+(p1 | p2) &
+  scale_fill_manual(values = c("black", "grey32")) &
+  scale_color_manual(values = c("forestgreen", "snow")) &
+  scale_size(range = c(2, 5)) &
+  theme(legend.position = "none")
 ```
 
