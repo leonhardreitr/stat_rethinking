@@ -1,0 +1,268 @@
+---
+title: "Chapter 12"
+format: 
+    html:
+    theme: cosmo
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r}
+library(tidyverse)
+library(brms)
+library(ggthemes)
+
+theme_set(
+  theme_hc() +
+  theme(axis.ticks.y = element_blank(),
+        plot.background = element_rect(fill = "grey92"))
+)
+```
+
+
+Zeit paar Monster zu erzeugen, indem man Modelle mixt
+
+- over-dispersion
+ Erweiterung von binomial/poisson um sources of unkown variance zu lindern
+ 
+ - zero-inflated/augmented
+ Binary event + GLM likelihood
+ 
+ - ordered categorical model
+ für Modelle mit einem fix geordneten Outcome und einem spezillere Link-function:
+ dem kumulativen link
+ 
+ 
+## over dispersion counts
+ If counts come from more than one distribution it leads to higher amounts of variation than the model expects. The model becomes to excited
+ 
+This is known as over-dispersion (dispersion = other word for variance)
+
+continouse mixture models: linear model is attached not to the observations themselves but rather to a distribution of observations
+
+### beta binomial model
+Assumes each count to have it's own probability of success
+
+$$
+\operatorname{Beta}(y | \alpha, \beta) = \frac{y^{\alpha - 1} 
+(1 - y)^{\beta - 1}}{\text B (\alpha, \beta)}
+$$
+
+
+```{r}
+pbar  <- .5
+theta <- 5
+
+ggplot(data = tibble(x = seq(from = 0, to = 1, by = .01)),
+       aes(x = x, y = rethinking::dbeta2(x, prob = pbar, theta = theta))) +
+  geom_area(fill = "plum4") +
+  scale_x_continuous("probability space", breaks = c(0, .5, 1)) +
+  scale_y_continuous(NULL, breaks = NULL) 
+```
+
+$$
+\operatorname{A_i} \sim \operatorname{BetaBinomial}(N,\bar{p},\theta) \\
+logit(\bar{p_i}) = \alpha_{GID[i]} \\
+\alpha_j \sim Normal(0,1.5) \\
+\theta = \phi + 2 \\
+\phi \sim Exponential(1)
+$$
+
+```{r}
+data(UCBadmit, package = "rethinking") 
+d <- 
+  UCBadmit |>
+  mutate(gid = ifelse(applicant.gender == "male", "1", "2"))
+rm(UCBadmit)
+
+beta_binomial2 <- custom_family(
+  "beta_binomial2", dpars = c("mu", "phi"),
+  links = c("logit", "log"),
+  lb = c(0, 2), ub = c(1, NA),
+  type = "int", vars = "vint1[n]"
+)
+
+stan_funs <- "
+  real beta_binomial2_lpmf(int y, real mu, real phi, int T) {
+    return beta_binomial_lpmf(y | T, mu * phi, (1 - mu) * phi);
+  }
+  int beta_binomial2_rng(real mu, real phi, int T) {
+    return beta_binomial_rng(T, mu * phi, (1 - mu) * phi);
+  }
+"
+
+stanvars <- stanvar(scode = stan_funs, block = "functions")
+
+b12.1 <-
+  brm(data = d, 
+      family = beta_binomial2,  
+      admit | vint(applications) ~ 0 + gid,
+      prior = c(prior(normal(0, 1.5), class = b),
+                prior(exponential(1), class = phi)),
+      iter = 2000, warmup = 1000, cores = 4, chains = 4,
+      stanvars = stanvars,  
+      seed = 12,
+      file = "fits/b12.01")
+
+print(b12.1)
+
+post <- as_draws_df(b12.1)
+
+library(tidybayes)
+post |> 
+  transmute(da = 
+              b_gid1 - b_gid2) |> 
+  mean_qi(.width = .89) |> 
+  mutate_if(is.double, round, digits = 3)
+
+set.seed(12)
+
+lines <-
+  post |>
+  mutate(p_bar = inv_logit_scaled(b_gid2)) |>
+  slice_sample(n = 100) |>
+  select(.draw, p_bar, phi) |>
+  expand_grid(x = seq(from = 0, to = 1, by = .005)) |>
+  mutate(density = pmap_dbl(list(x, p_bar, phi), rethinking::dbeta2))
+
+str(lines)
+
+lines |> 
+  ggplot(aes(x = x, y = density)) + 
+  stat_function(fun = rethinking::dbeta2,
+                args = list(prob = mean(inv_logit_scaled(post %>% pull(b_gid2))),
+                            theta = mean(post %>% pull(phi))),
+                linewidth = 1.5, color = canva_pal("Green fields")(4)[4]) +
+  geom_line(aes(group = .draw),
+            alpha = .2, color = canva_pal("Green fields")(4)[4]) +
+  scale_y_continuous(NULL, breaks = NULL, limits = c(0, 3)) +
+  labs(subtitle = "distribution of female admission rates",
+       x = "probability admit")
+
+data(Kline, package = "rethinking")
+d <- 
+  Kline %>% 
+  mutate(p          = rethinking::standardize(log(population)),
+         contact_id = ifelse(contact == "high", 2L, 1L),
+         cid        = contact)
+rm(Kline)
+
+print(d)
+```
+
+$$
+\begin{align*}
+\text{total_tools}_i & \sim \operatorname{Gamma-Poisson} (\mu, \alpha) \\
+\text{log}(\mu) & = \beta_0 \\
+\beta_0         & \sim \operatorname{Normal}(3, 0.5) \\
+\alpha          & \sim \operatorname{Gamma}(0.01, 0.01)
+\end{align*}
+$$
+
+```{r}
+ggplot(data = tibble(x = seq(from = 0, to = 60, by = .1)),
+       aes(x = x, y = dgamma(x, shape = 0.01, rate = 0.01))) +
+  geom_area(color = "transparent", 
+            fill = "pink") +
+  scale_x_continuous(NULL) +
+  scale_y_continuous(NULL, breaks = NULL) +
+  coord_cartesian(xlim = c(0, 50)) +
+  ggtitle(expression(brms~default~gamma(0.01*", "*0.01)~shape~prior))
+
+b12.2a <-
+  brm(data = d, 
+      family = negbinomial,
+      total_tools ~ 1,
+      prior = c(prior(normal(3, 0.5), class = Intercept),  # beta_0
+                prior(gamma(0.01, 0.01), class = shape)),  # alpha
+      iter = 2000, warmup = 1000, cores = 4, chains = 4,
+      seed = 12,
+      file = "fits/b12.02a")
+
+print(b12.2a)
+```
+
+## zero inflated outcomes
+
+Very often, the things we can measure are not emissions from any pure process. Instead, they are mixtures of multiple processes. Whenever there are different causes for the same observation, then a mixture model may be useful. A mixture model uses more than one simple probability distribution to model a mixture of causes. In effect, these models use more than one likelihood for the same outcome variable
+
+```{r}
+prob_drunk <- .2
+rate_work <- 1
+
+n <- 365
+
+set.seed(99)
+drunk <- rbinom(n,
+                size = 1,
+                prob = prob_drunk)
+
+y <- (1-drunk) * rpois(n,rate_work)
+
+tibble(
+  drink = factor(drunk, levels = 1:0),
+  y     = y
+) -> d
+
+d |> 
+  ggplot(aes(x = y)) +
+  geom_histogram(aes(fill = drink),
+                 binwidth = 1, linewidth = 1/10, color = "grey92") +
+  scale_fill_manual(values = c("steelblue", "firebrick")) +
+  xlab("Manuscripts completed") +
+  theme(legend.position = "none")
+
+b12.3 <- 
+  brm(data = d, 
+      family = zero_inflated_poisson,
+      y ~ 1,
+      prior = c(prior(normal(1, 0.5), class = Intercept),
+                prior(beta(2, 6), class = zi)),  
+      iter = 2000, warmup = 1000, chains = 4, cores = 4,
+      seed = 12,
+      file = "fits/b12.03") 
+
+print(b12.3)
+```
+
+## Orderedcategoricaloutcomes
+
+```{r}
+data(Trolley, package = "rethinking")
+d <- Trolley
+rm(Trolley)
+
+p1 <-
+  d |> 
+  ggplot(aes(x = response, fill = after_stat(x))) +
+  geom_histogram(binwidth = 1/4, linewidth = 0) +
+  scale_fill_gradient(low = canva_pal("Green fields")(4)[4],
+                      high = canva_pal("Green fields")(4)[1]) +
+  scale_x_continuous(breaks = 1:7) +
+  theme(axis.ticks = element_blank(),
+        axis.title.y = element_text(angle = 90),
+        legend.position = "none")
+p1
+
+p2 <-
+  d %>%
+  count(response) %>%
+  mutate(pr_k     = n / nrow(d),
+         cum_pr_k = cumsum(pr_k)) %>% 
+  
+  ggplot(aes(x = response, y = cum_pr_k, 
+             fill = response)) +
+  geom_line(color = canva_pal("Green fields")(4)[2]) +
+  geom_point(shape = 21, color = "grey92", 
+             size = 2.5, stroke = 1) +
+  scale_fill_gradient(low = canva_pal("Green fields")(4)[4],
+                      high = canva_pal("Green fields")(4)[1]) +
+  scale_x_continuous(breaks = 1:7) +
+  scale_y_continuous("cumulative proportion", 
+                     breaks = c(0, .5, 1), limits = c(0, 1)) +
+  theme(axis.ticks = element_blank(),
+        axis.title.y = element_text(angle = 90),
+        legend.position = "none")
+p2
+```
+
