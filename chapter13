@@ -1,0 +1,165 @@
+---
+title: "Chapter 13"
+format: html
+theme: cosmo
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r}
+#| warning: false
+#| message: false
+library(brms)
+library(tidybayes)
+library(tidyverse)
+library(ggthemes)
+data(reedfrogs, package = "rethinking")
+d <- reedfrogs
+rm(reedfrogs)
+
+theme_set(
+  theme_ggdist() +
+    theme(plot.title.position = "plot")
+)
+```
+
+```{r}
+glimpse(d)
+
+d <- 
+  d |> 
+  mutate(tank = 1:nrow(d))
+```
+
+$$
+\begin{align*}
+\text{surv}_i             & \sim \operatorname{Binomial}(n_i, p_i) \\
+\operatorname{logit}(p_i) & = \alpha_{\text{tank}[i]} \\
+\alpha_j                  & \sim \operatorname{Normal} (0, 1.5) & \text{for } j = 1, \dots, 48,
+\end{align*}
+$$
+```{r}
+#| warning: false
+#| message: false
+m13.1 <- 
+  brm(data = d,
+      family = binomial,
+      surv | trials(density) ~ 0 + factor(tank),
+      prior(normal(0,1.5)),
+      chains = 4, cores = 4, file = "fits/m13.01")
+
+summary(m13.1)
+
+# plot
+tibble(estimate = fixef(m13.1)[, 1]) |> 
+  mutate(p = inv_logit_scaled(estimate)) |> 
+  pivot_longer(estimate:p) |> 
+  mutate(name = 
+           if_else(name == "p", "expected survival probability",
+                   "expected survival log-odds")) |> 
+  
+  ggplot(aes(fill = name, x = value)) +
+  stat_dots(size = 0) +
+  scale_fill_colorblind() +
+  scale_y_continuous(breaks = NULL) +
+  labs(title = "Tank-level intercepts from the no-pooling model") +
+  theme(legend.position = "none",
+        panel.grid = element_blank()) +
+  facet_wrap(~ name, scales = "free_x")
+
+  
+```
+
+```{r}
+#| warning: false
+#| message: false
+m13.2 <- 
+  brm(data = d,
+      family = binomial,
+      surv | trials(density) ~ 1 + (1 | tank),
+      prior = c(prior(normal(0, 1.5), class = Intercept),  
+                prior(exponential(1), class = sd)),        
+      iter = 5000, warmup = 1000, chains = 4, cores = 4,
+      sample_prior = "yes",
+      seed = 13,
+      file = "fits/b13.02")
+
+b13.1 <- add_criterion(m13.1, "waic")
+b13.2 <- add_criterion(m13.2, "waic")
+
+w <- loo_compare(b13.1, b13.2, criterion = "waic")
+
+print(w, simplify = F)
+
+
+post <- as_draws_df(b13.2)
+
+post_mdn <- 
+  coef(b13.2, robust = T)$tank[, , ] |> 
+  data.frame() |> 
+  bind_cols(d)  |> 
+  mutate(post_mdn = inv_logit_scaled(Estimate))
+
+head(post_mdn)
+
+post_mdn |> 
+  ggplot(aes(x = tank)) +
+  geom_hline(yintercept = inv_logit_scaled(median(post$b_Intercept)), linetype = 2, linewidth = 1/4) +
+  geom_vline(xintercept = c(16.5, 32.5), linewidth = 1/4, color = "grey25") +
+  geom_point(aes(y = propsurv), color = "darkblue") +
+  geom_point(aes(y = post_mdn), shape = 1) +
+  annotate(geom = "text", 
+           x = c(8, 16 + 8, 32 + 8), y = 0, 
+           label = c("small tanks", "medium tanks", "large tanks")) +
+  scale_x_continuous(breaks = c(1, 16, 32, 48)) +
+  scale_y_continuous(breaks = 0:5 / 5, limits = c(0, 1)) +
+  labs(title = "Multilevel shrinkage") 
+```
+
+```{r}
+set.seed(13)
+
+p1 <-
+  post %>% 
+  slice_sample(n = 100) %>% 
+  expand_grid(x = seq(from = -4, to = 5, length.out = 100)) %>%
+  mutate(density = dnorm(x, mean = b_Intercept, sd = sd_tank__Intercept)) %>% 
+    
+  ggplot(aes(x = x, y = density, group = .draw)) +
+  geom_line(alpha = .2, color = "orange2") +
+  scale_y_continuous(NULL, breaks = NULL) +
+  labs(title = "Population survival distribution",
+       subtitle = "log-odds scale") +
+  coord_cartesian(xlim = c(-3, 4))
+
+p1 <- 
+  post |> 
+  slice_sample(n = 1e2) |> 
+  expand_grid(x = seq(from = -4, to = 5, length.out = 100)) |> 
+  mutate(denisty = dnorm(x, mean = b_Intercept, sd = sd_tank__Intercept)) |> 
+  
+  ggplot(aes(x = x, y = denisty, group = .draw)) +
+  geom_line(alpha = .2, color = "black") +
+  scale_y_continuous(NULL, breaks = NULL) +
+  labs(title = "Population surival distribution") +
+  coord_cartesian(xlim = c(-3,4))
+
+set.seed(13)
+
+p2 <- 
+  post |> 
+  slice_sample(n = 8e3, replace = TRUE) |> 
+  mutate(sim_tanks = rnorm(n(), mean = b_Intercept, sd = sd_tank__Intercept)) |> 
+  
+  ggplot(aes(x = inv_logit_scaled(sim_tanks))) +
+  geom_density(linewidth = 0, fill = "#538249", adjust = .1) +
+  scale_y_continuous(NULL, breaks = NULL) +
+  labs(title = "Probability of survival")
+
+
+library(patchwork)
+
+(p1 + p2) &
+  theme(plot.title = element_text(size = 10))
+```
+
