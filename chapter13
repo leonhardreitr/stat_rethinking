@@ -120,10 +120,10 @@ post_mdn |>
 set.seed(13)
 
 p1 <-
-  post %>% 
-  slice_sample(n = 100) %>% 
-  expand_grid(x = seq(from = -4, to = 5, length.out = 100)) %>%
-  mutate(density = dnorm(x, mean = b_Intercept, sd = sd_tank__Intercept)) %>% 
+  post |> 
+  slice_sample(n = 100) |> 
+  expand_grid(x = seq(from = -4, to = 5, length.out = 100)) |>
+  mutate(density = dnorm(x, mean = b_Intercept, sd = sd_tank__Intercept)) |> 
     
   ggplot(aes(x = x, y = density, group = .draw)) +
   geom_line(alpha = .2, color = "orange2") +
@@ -161,5 +161,126 @@ library(patchwork)
 
 (p1 + p2) &
   theme(plot.title = element_text(size = 10))
+```
+
+```{r}
+a_bar   <-  1.5
+sigma   <-  1.5
+n_ponds <- 60
+
+set.seed(5005)
+
+dsim <- 
+  tibble(pond   = 1:n_ponds,
+         ni     = rep(c(5, 10, 25, 35), each = n_ponds / 4) |> as.integer(),
+         true_a = rnorm(n = n_ponds, mean = a_bar, sd = sigma))
+
+head(dsim)
+
+dsim |> 
+  ggplot(aes(x = true_a, y = factor(ni))) +
+  stat_dotsinterval(fill = "plum",.width = .5, slab_size = 0) +
+  labs(title = "Log-odds varying by the number of frogs per pond",
+       x = NULL, y = NULL)
+
+dsim <- 
+  dsim |> 
+  mutate(si = 
+           rbinom(n(), prob = inv_logit_scaled(true_a), size = ni))
+
+dsim <- 
+  dsim |> 
+  mutate(p_nopool = si/ni)
+
+b13.3 <- 
+  brm(
+    data = dsim,
+    family = binomial,
+    si | trials(ni) ~ 1 + (1|pond),
+    prior = c(prior(normal(0, 1.5), class = Intercept),
+                prior(exponential(1), class = sd)),
+      iter = 2000, warmup = 1000, chains = 4, cores = 4,
+      seed = 13,
+      file = "fits/b13.03")
+  
+```
+
+```{r}
+p_partpool <- 
+  coef(b13.3)$pond[, , ] |> 
+  data.frame() |>
+  transmute(p_partpool = inv_logit_scaled(Estimate))
+
+dsim <- 
+  dsim |>
+  bind_cols(p_partpool) |> 
+  mutate(p_true = inv_logit_scaled(true_a)) |>
+  mutate(nopool_error   = abs(p_nopool   - p_true),
+         partpool_error = abs(p_partpool - p_true))
+
+dfline <- 
+  dsim |>
+  select(ni, nopool_error:partpool_error) |>
+  pivot_longer(-ni) |>
+  group_by(name, ni) |>
+  summarise(mean_error = mean(value)) |>
+  mutate(x    = c( 1, 16, 31, 46),
+         xend = c(15, 30, 45, 60))
+  
+dsim |> 
+  ggplot(aes(x = pond)) +
+  geom_vline(xintercept = c(15.5, 30.5, 45.4), 
+             color = "black", linewidth = 2/3) +
+  geom_point(aes(y = nopool_error), color = "blue") +
+  geom_point(aes(y = partpool_error), shape = 1) +
+  geom_segment(data = dfline, 
+               aes(x = x, xend = xend, 
+                   y = mean_error, yend = mean_error),
+               color = rep(c("blue", "black"), each = 4),
+               linetype = rep(1:2, each = 4)) +
+  annotate(geom = "text", 
+           x = c(15 - 7.5, 30 - 7.5, 45 - 7.5, 60 - 7.5), y = .45, 
+           label = c("tiny (5)", "small (10)", "medium (25)", "large (35)")) +
+  scale_x_continuous(breaks = c(1, 10, 20, 30, 40, 50, 60)) +
+  labs(title = "Estimate error by model type",
+       y = "absolute error") +
+  theme(panel.grid.major = element_blank(),
+        plot.subtitle = element_text(size = 10))
+
+a_bar   <-  1.5
+sigma   <-  1.5
+n_ponds <- 60
+
+set.seed(1999)  # for new data, set a new seed
+
+new_dsim <- 
+  tibble(pond   = 1:n_ponds,
+         ni     = rep(c(5, 10, 25, 35), each = n_ponds / 4) |> as.integer(),
+         true_a = rnorm(n = n_ponds, mean = a_bar, sd = sigma)) |> 
+  mutate(si = rbinom(n = n(), prob = inv_logit_scaled(true_a), size = ni)) |> 
+  mutate(p_nopool = si / ni)
+
+b13.3_new <- 
+  update(b13.3,
+         newdata = new_dsim,
+         chains = 4, cores = 4,
+         seed = 13,
+         file = "fits/b13.03_new")
+
+bind_rows(as_draws_df(b13.3),
+          as_draws_df(b13.3_new)) |>
+  mutate(model = rep(c("b13.3", "b13.3_new"), each = n() / 2)) |> 
+  ggplot(aes(x = b_Intercept, y = sd_pond__Intercept)) +
+  stat_density_2d(geom = "raster", 
+                  aes(fill = after_stat(density)), 
+                  contour = F, n = 200) +
+  geom_vline(xintercept = a_bar, color = "snow", linetype = 3) +
+  geom_hline(yintercept = sigma, color = "snow", linetype = 3) +
+  scale_fill_gradient(low = "grey25", high = "red4") +
+  coord_cartesian(xlim = c(.7, 2),
+                  ylim = c(.8, 1.9)) +
+  theme(legend.position = "none",
+        panel.grid.major = element_blank()) +
+  facet_wrap(~ model, ncol = 2)
 ```
 
